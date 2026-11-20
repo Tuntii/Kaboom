@@ -65,11 +65,14 @@ pub fn (mut q CommandQueue) flush(mut w ecs.World, tick u64, mut rec Recorder) u
 			}
 			if r.status == .ok {
 				ok++
-				mut rc := c
-				if c.kind == .spawn {
-					rc.entity = r.entity
+				// Script komutları replay'de simülasyon tarafından yeniden üretilir; kaydedilirse iki kez uygulanır.
+				if c.source != .script {
+					mut rc := c
+					if c.kind == .spawn {
+						rc.entity = r.entity
+					}
+					rec.append(tick, rc)
 				}
-				rec.append(tick, rc)
 			}
 		}
 	}

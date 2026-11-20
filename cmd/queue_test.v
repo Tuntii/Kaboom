@@ -103,6 +103,33 @@ fn test_push_full_returns_false() {
 	assert q.len() == 2
 }
 
+// Kayıt yalnızca dış komutları tutar; script komutları kayda girmez, kalanlar uygulama sırasıyla yazılır.
+fn test_flush_records_only_external_sources_in_applied_order() {
+	region, mut w, mut q, mut rec := queue_env(8, 8)
+	defer {
+		memory.release(region)
+	}
+	e := w.spawn() or { panic('spawn') }
+	assert w.add_component(e, ecs.transform_id) == .ok
+	rec.start()
+	q.push(Command{ kind: .set_field, source: .agent, entity: e, comp: 0, field: 0, value: bits(1.0) })
+	q.push(Command{ kind: .set_field, source: .script, entity: e, comp: 0, field: 0, value: bits(2.0) })
+	q.push(Command{ kind: .set_field, source: .editor, entity: e, comp: 0, field: 0, value: bits(3.0) })
+	assert q.flush(mut w, 4, mut rec) == 3
+	assert rec.len() == 2
+	path := os.join_path(os.temp_dir(), 'vcore_cmd_script_excluded.vcrc')
+	defer {
+		os.rm(path) or {}
+	}
+	rec.save(path, 8, 4) or { panic(err) }
+	got := load_recording(path) or { panic(err) }
+	assert got.entries.len == 2
+	assert got.entries[0].cmd.source == .editor
+	assert got.entries[0].cmd.value == bits(3.0)
+	assert got.entries[1].cmd.source == .agent
+	assert got.entries[1].cmd.value == bits(1.0)
+}
+
 // Flush'tan sonraki ilk push kuyruğu ve sonuçları temizler.
 fn test_push_after_flush_resets_queue() {
 	region, mut w, mut q, mut rec := queue_env(2, 8)
