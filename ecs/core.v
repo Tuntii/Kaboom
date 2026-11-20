@@ -9,8 +9,8 @@ pub struct Transform {
 pub mut:
 	x      f32 @[unit: 'm']
 	y      f32 @[unit: 'm']
-	prev_x f32 @[unit: 'm'; readonly; desc: 'Önceki tick konumu (interpolasyon)']
-	prev_y f32 @[unit: 'm'; readonly; desc: 'Önceki tick konumu (interpolasyon)']
+	prev_x f32 @[desc: 'Önceki tick konumu (interpolasyon)'; readonly; unit: 'm']
+	prev_y f32 @[desc: 'Önceki tick konumu (interpolasyon)'; readonly; unit: 'm']
 }
 
 pub struct Body {

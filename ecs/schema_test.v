@@ -18,7 +18,7 @@ fn test_core_registry_layout() {
 
 struct Ranged {
 pub mut:
-	v f32 @[min: '-5'; max: '5'; desc: 'aralik']
+	v f32 @[desc: 'aralik'; max: '5'; min: '-5']
 }
 
 fn test_attr_parsing() {
