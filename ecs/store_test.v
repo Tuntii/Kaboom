@@ -110,6 +110,34 @@ fn test_new_rolls_back_on_small_arena() {
 	assert a.used() == used
 }
 
+// Silinmis satirin kirli degerleri yeniden kullanilan satirda kalmamali; insert tum alanlari 0'lar.
+fn test_insert_zeroes_reused_row() {
+	mut s := new_store(4)
+	r0 := s.insert(0)?
+	r1 := s.insert(1)?
+	for f in 0 .. s.field_count() {
+		s.set_raw(r0, f, u64(0xDEAD_BEEF_FFFF_FFFF))
+		s.set_raw(r1, f, u64(0xDEAD_BEEF_FFFF_FFFF))
+	}
+	// Swap-and-pop: 1 satiri 0'in satirina tasinir, eski satir 1 (kirli) bosalir.
+	assert s.remove(0)
+	assert s.row_of(1)? == 0
+	// Bosalan satir 1 yeniden kullanilir; kirli degerler sifirlanmali.
+	r2 := s.insert(2)?
+	assert r2 == 1
+	for f in 0 .. s.field_count() {
+		assert s.get_raw(r2, f) == 0
+	}
+	// Son satirdan bosalan dogrudan yeniden kullanim: 2'yi sil, 3'u ayni satira al.
+	s.set_raw(r2, 0, u64(0xFFFF_FFFF))
+	assert s.remove(2)
+	r3 := s.insert(3)?
+	assert r3 == 1
+	for f in 0 .. s.field_count() {
+		assert s.get_raw(r3, f) == 0
+	}
+}
+
 fn test_insert_out_of_capacity_after_churn() {
 	mut s := new_store(2)
 	s.insert(0)?
