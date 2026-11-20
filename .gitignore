@@ -1,0 +1,10 @@
+# Derleme çıktıları
+bin/
+*.exe
+*.pdb
+*.o
+*.tmp.c
+# Ajan çalışma alanı (SDD defteri, brief'ler, raporlar)
+.superpowers/
+# Kayıt dosyaları (test/ajan çıktısı)
+*.vcrec
