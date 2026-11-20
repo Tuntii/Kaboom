@@ -57,3 +57,17 @@ fn test_epoch_parent_too_small() {
 		assert false, 'parent 2 yariyi tasiyamiyor, none donmeli'
 	}
 }
+
+// Ikinci yari sigmazsa ilk yari parent'a geri yazilmali.
+fn test_epoch_new_rolls_back() {
+	base := reserve(4096) or { panic('reserve basarisiz') }
+	defer { release(base) }
+	mut parent := LinearArena.new(base, 256)
+	// Offset 8: ilk yari 64'e hizalanip 192'de biter, ikinci yari 320'de biterdi (> 256).
+	parent.alloc_aligned(8, 1) or { panic('prealloc none') }
+	before := parent.used()
+	if _ := EpochArena.new(mut parent, 128) {
+		assert false, 'ikinci yari sigmiyor, none donmeli'
+	}
+	assert parent.used() == before
+}

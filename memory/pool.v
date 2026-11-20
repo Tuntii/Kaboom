@@ -15,7 +15,7 @@ mut:
 	first_free u32
 }
 
-// Slot blogu ve bitmap parent'tan 64 hizali alinir. Tasmada ya da gecersiz boyutta none.
+// Slot blogu ve bitmap parent'tan 64 hizali alinir. Tasmada ya da gecersiz boyutta none; parent geri sarilir.
 pub fn PoolAllocator.new(mut parent LinearArena, slot_size u64, slot_count u32) ?PoolAllocator {
 	max := u64(-1)
 	// align_forward(slot_size, 16) sarmasin diye ust sinir; slot_size 0 ise gecersiz.
@@ -28,8 +28,15 @@ pub fn PoolAllocator.new(mut parent LinearArena, slot_size u64, slot_count u32) 
 	}
 	// u64'te hesaplanir: u32 toplami slot_count > 0xFFFFFFC0 icin sarardi.
 	word_count := u32((u64(slot_count) + 63) / 64)
-	slots := parent.alloc_aligned(stride * u64(slot_count), 64) or { return none }
-	bitmap := parent.alloc_aligned(u64(word_count) * 8, 64) or { return none }
+	m := parent.mark()
+	slots := parent.alloc_aligned(stride * u64(slot_count), 64) or {
+		parent.rewind(m)
+		return none
+	}
+	bitmap := parent.alloc_aligned(u64(word_count) * 8, 64) or {
+		parent.rewind(m)
+		return none
+	}
 	free_bits := unsafe { &u64(bitmap) }
 	for w in 0 .. int(word_count) {
 		unsafe {

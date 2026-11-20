@@ -106,3 +106,33 @@ fn test_generation_retire() {
 		assert false
 	}
 }
+
+fn test_handle_at_and_high_water() {
+	base := memory.reserve(65536) or { panic('reserve basarisiz') }
+	defer { memory.release(base) }
+	mut arena := memory.LinearArena.new(base, 65536)
+	mut ea := EntityAllocator.new(mut arena, 8) or { panic('new none') }
+	e0 := ea.create() or { panic('create none') }
+	_ := ea.create() or { panic('create none') }
+	_ := ea.create() or { panic('create none') }
+	assert ea.high_water() == 3
+	assert ea.destroy(make_entity(1, 0))
+	assert (ea.handle_at(0) or { panic('handle_at(0) none') }) == e0
+	// Olu slot ve high_water disi: none.
+	assert ea.handle_at(1) == none
+	assert ea.handle_at(7) == none
+}
+
+// Dizi tahsisi sigar, bitmap sigmaz: parent geri sarilmali.
+fn test_new_rolls_back_on_bitmap_failure() {
+	base := memory.reserve(65536) or { panic('reserve basarisiz') }
+	defer { memory.release(base) }
+	mut arena := memory.LinearArena.new(base, 180)
+	// Offset 8: gens 64..80, next 128..160, bits 192..200 (> 180).
+	arena.alloc_aligned(8, 1) or { panic('prealloc none') }
+	before := arena.used()
+	if _ := EntityAllocator.new(mut arena, 8) {
+		assert false, 'bitmap sigmiyor, none donmeli'
+	}
+	assert arena.used() == before
+}
