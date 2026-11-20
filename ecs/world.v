@@ -11,6 +11,7 @@ pub enum Status as u8 {
 	already_has
 	missing_component
 	capacity_full
+	invalid_command
 }
 
 // Varlık tahsisatçısı ve her bileşen için bir store. Store'lar kurulumda bir kez açılır, tick yolunda büyümez.

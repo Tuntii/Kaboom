@@ -62,9 +62,10 @@ pub fn apply(mut w ecs.World, c Command) ApplyResult {
 		.set_field {
 			w.set_field(c.entity, c.comp, c.field, c.value)
 		}
+		// Diskten okunan kayıtta bilinmeyen tür: hiçbir şey değişmez.
 		else {
-			ecs.Status.ok
-		} // spawn yukarıda ele alındı
+			ecs.Status.invalid_command
+		}
 	}
 
 	return ApplyResult{
