@@ -59,7 +59,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'entity.get'
 		params: '{"entity": id}'
-		result: '{"entity": id, "index": n, "generation": n, "components": {"<Comp>": {"<field>": number}}}'
+		result: '{"entity": id, "index": n, "generation": n, "components": {"<Comp>": {"<field>": number}}}; sonlu olmayan f32 değerler metin olarak döner: "inf", "-inf", "nan"'
 	},
 	CommandDoc{
 		method: 'query.entities'
@@ -417,14 +417,23 @@ fn (mut s Server) record_stop(p map[string]json2.Any) !json2.Any {
 	if !s.engine.recorder.is_active() {
 		return record_error('no recording is active; call record.start first')
 	}
-	s.engine.recorder.stop()
 	tick := s.engine.tick()
+	// Taşmış kayıt yazılmaz; kayıt yine de durdurulur ki bir sonraki record.start çalışabilsin.
+	if s.engine.recorder.overflowed() {
+		s.engine.recorder.stop()
+		return rpc_error(code_io_error, 'io error', {
+			'path': json2.Any(path)
+			'hint': json2.Any('recording buffer overflowed; restart with a larger record capacity')
+		})
+	}
+	// Kayıt, yazma başarılı olmadan durdurulmaz: I/O hatasında kayıt aktif kalır ve tekrar denenebilir.
 	s.engine.recorder.save(path, s.cfg.capacity, tick) or {
 		return rpc_error(code_io_error, 'io error', {
 			'path': json2.Any(path)
-			'hint': json2.Any('recording was not saved: the file could not be written or the record buffer overflowed (raise record_capacity)')
+			'hint': json2.Any('could not write file; retry record.stop with another path')
 		})
 	}
+	s.engine.recorder.stop()
 	return json2.Any({
 		'path':     json2.Any(path)
 		'commands': json2.Any(int(s.engine.recorder.len()))
@@ -441,11 +450,22 @@ fn (s &Server) replay_run(p map[string]json2.Any) !json2.Any {
 			'hint': json2.Any('recording could not be read or is malformed; record it again with record.start and record.stop')
 		})
 	}
-	res := sim.replay(rec, &s.reg) or {
-		return rpc_error(code_replay_diverged, 'replay diverged', {
+	if rec.capacity > s.cfg.capacity {
+		return rpc_error(code_io_error, 'io error', {
 			'path': json2.Any(path)
-			'hint': json2.Any(err.msg())
+			'hint': json2.Any('recording needs capacity ${rec.capacity}; start vcore with --capacity >= ${rec.capacity}')
 		})
+	}
+	res := sim.replay(rec, &s.reg) or {
+		msg := err.msg()
+		// Yalnızca "replay diverged: " önekli hatalar kaydın ayrıştığını gösterir; diğerleri sunucu içi hatadır.
+		if msg.starts_with('replay diverged: ') {
+			return rpc_error(code_replay_diverged, 'replay diverged', {
+				'path': json2.Any(path)
+				'hint': json2.Any(msg)
+			})
+		}
+		return internal_error(msg)
 	}
 	return json2.Any({
 		'end_tick': json2.Any(u64(res.end_tick))

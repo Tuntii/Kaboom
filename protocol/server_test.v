@@ -3,6 +3,9 @@ module protocol
 import os
 import x.json2
 import sim
+import cmd
+import ecs
+import memory
 
 fn new_server() Server {
 	return Server.new(sim.Config{ capacity: 64, queue_capacity: 64, record_capacity: 1024 }) or {
@@ -395,4 +398,78 @@ fn test_jsonrpc_member_must_be_2_0() {
 	assert s.handle('{"jsonrpc":"1.0","method":"sim.step","params":{"n":1}}') == none
 	h := result_of(call(mut s, '{"jsonrpc":"2.0","id":5,"method":"sim.state_hash"}'))
 	assert pick(h, 'tick').u64() == 0
+}
+
+// Kayıt dosyasını doğrudan yazar; girdiler sunucu üzerinden üretilemeyen bozuk kayıtlar için kullanılır.
+fn write_recording(path string, entity ecs.EntityID, world_capacity u32) {
+	region := memory.reserve(1 << 16) or { panic('reserve basarisiz') }
+	defer {
+		memory.release(region)
+	}
+	mut a := memory.LinearArena.new(region, 1 << 16)
+	mut rec := cmd.Recorder.new(mut a, 4) or { panic('Recorder.new none') }
+	rec.start()
+	rec.append(0, cmd.Command{ kind: .set_field, source: .agent, entity: entity, comp: 0, field: 0, value: 0 })
+	rec.save(path, world_capacity, 1) or { panic(err) }
+}
+
+fn test_record_stop_io_failure_keeps_recording() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	_ = call(mut s, '{"jsonrpc":"2.0","id":1,"method":"record.start"}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":2,"method":"entity.spawn"}')
+	bad := os.join_path(os.temp_dir(), 'vcore_no_such_dir', 'x.vcrec').replace('\\', '/')
+	failed := call(mut s, '{"jsonrpc":"2.0","id":3,"method":"record.stop","params":{"path":"${bad}"}}')
+	assert error_code(failed) == 1010
+	assert str_of(at(at(at(failed, 'error'), 'data'), 'hint')).contains('retry record.stop')
+	path := os.join_path(os.temp_dir(), 'vcore_protocol_keep_${os.getpid()}.vcrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	stop := result_of(call(mut s,
+		'{"jsonrpc":"2.0","id":4,"method":"record.stop","params":{"path":"${path}"}}'))
+	assert pick(stop, 'commands').int() >= 1
+}
+
+fn test_replay_divergence_maps_to_1011() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_protocol_diverge_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	// Hiç doğmamış bir varlığa set_field: yükleme geçer, replay ayrışır.
+	write_recording(path, ecs.make_entity(9999, 0), 64)
+	bad := call(mut s, '{"jsonrpc":"2.0","id":1,"method":"replay.run","params":{"path":"${path}"}}')
+	assert error_code(bad) == 1011
+	assert str_of(at(at(at(bad, 'error'), 'data'), 'hint')).starts_with('replay diverged: tick 0 entry 0 ')
+}
+
+fn test_replay_capacity_too_large_is_1010() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_protocol_capacity_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	write_recording(path, ecs.make_entity(0, 0), 128) // sunucu kapasitesi 64
+	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":1,"method":"replay.run","params":{"path":"${path}"}}')) == 1010
+}
+
+fn test_deep_nesting_is_rejected_without_crash() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	deep := '['.repeat(10000) + ']'.repeat(10000)
+	assert error_code(call(mut s, deep)) == -32700
+	// 10 derinlik sınırın altındadır ve çalışmaya devam eder.
+	ok := '{"jsonrpc":"2.0","id":1,"method":"sim.state_hash","params":{"x":' + '['.repeat(10) + ']'.repeat(10) + '}}'
+	assert 'result' in call(mut s, ok).as_map()
 }

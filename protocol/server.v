@@ -48,6 +48,12 @@ pub fn (mut s Server) handle(line string) ?string {
 	if text == '' {
 		return none
 	}
+	// json2 özyinelemelidir: derin satır yığını taşırmadan decode'a girmeden reddedilir.
+	if json_nesting_too_deep(text) {
+		return error_line(null_value(), rpc_error(code_parse, 'parse error', {
+			'hint': json2.Any('JSON nesting deeper than 64')
+		}))
+	}
 	req := json2.decode[json2.Any](text) or {
 		return error_line(null_value(), rpc_error(code_parse, 'parse error', {
 			'hint': json2.Any('request line is not valid JSON')
@@ -126,6 +132,36 @@ fn (mut s Server) dispatch(method string, p map[string]json2.Any) !json2.Any {
 	return rpc_error(code_method_not_found, 'method not found', {
 		'hint': json2.Any('unknown method "${method}"; see schema.commands')
 	})
+}
+
+// [ ve { derinliği JSON metinlerinde (tırnak içi hariç) 64'ü aşarsa true.
+fn json_nesting_too_deep(text string) bool {
+	mut depth := 0
+	mut in_str := false
+	mut i := 0
+	for i < text.len {
+		c := text[i]
+		if in_str {
+			if c == `\\` {
+				i += 2
+				continue
+			}
+			if c == `"` {
+				in_str = false
+			}
+		} else if c == `"` {
+			in_str = true
+		} else if c == `[` || c == `{` {
+			depth++
+			if depth > 64 {
+				return true
+			}
+		} else if c == `]` || c == `}` {
+			depth--
+		}
+		i++
+	}
+	return false
 }
 
 fn is_jsonrpc_20(m map[string]json2.Any) bool {
