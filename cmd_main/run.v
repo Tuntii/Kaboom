@@ -124,8 +124,15 @@ fn run_window(args []string) {
 		win.close()
 	}
 	render.load_gl() or { gl_fail(err) }
-	qf := render.resolve_quad_fields(srv.registry()) or { gl_fail(err) }
-	mut rend := render.Renderer.new(o.capacity) or { gl_fail(err) }
+	// Yalnız pencere ve load_gl başarısızlığı "GL yok" (çıkış 3); kurulum hataları genel hatadır (çıkış 1).
+	qf := render.resolve_quad_fields(srv.registry()) or {
+		eprintln('vcore: ${err}')
+		exit(1)
+	}
+	mut rend := render.Renderer.new(o.capacity) or {
+		eprintln('vcore: ${err}')
+		exit(1)
+	}
 	defer {
 		rend.close()
 	}
