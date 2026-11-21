@@ -154,6 +154,9 @@ fn test_render_scenario_screenshot() {
 
 	assert_rgb_near(render_pixel(pixels, pw, red_x, mid_y), [u8(255), 0, 0], 'kirmizi merkez')
 	assert_rgb_near(render_pixel(pixels, pw, blue_x, mid_y), [u8(0), 0, 255], 'mavi merkez')
+	// Hareketli yeşil varlık: 120 adımdan sonra x≈10 (vx=10, 1 sn); ekran görüntüsü o karenin piksellerini taşır.
+	green_x := int((f32(10) + view_w / 2) / view_w * f32(w))
+	assert_rgb_near(render_pixel(pixels, pw, green_x, mid_y), [u8(0), 255, 0], 'yesil merkez x=10')
 	// Temizleme rengi: Renderer.new koyu gri (0.08, 0.08, 0.10) ayarlar; 0.08*255 ~ 20, 0.10*255 ~ 26.
 	assert_rgb_near(render_pixel(pixels, pw, 0, 0), [u8(20), 20, 26], 'kose')
 
