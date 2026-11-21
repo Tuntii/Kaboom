@@ -39,6 +39,10 @@ void vcore_cj_reset(void) {
 	vcore_cj_failed = 0;
 }
 
+unsigned long long vcore_cj_used(void) {
+	return vcore_cj_off;
+}
+
 int vcore_cj_exhausted(void) {
 	return vcore_cj_failed;
 }

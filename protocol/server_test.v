@@ -542,7 +542,7 @@ fn test_arena_exhaustion_returns_static_error() {
 	out := s.handle('{"jsonrpc":"2.0","id":1,"method":"sim.state_hash"}') or { panic('yanıt yok') }
 	assert out.contains('request or response too large'), out
 	assert out.contains('"code":-32600'), out
-	arena_set(s.req_region, request_arena_bytes)
+	arena_set(s.req_region, request_arena_bytes(s.cfg))
 	assert has(call(mut s, '{"jsonrpc":"2.0","id":2,"method":"sim.state_hash"}'), 'result')
 }
 
@@ -657,4 +657,65 @@ fn test_screenshot_hook_result() {
 	assert pick(res, 'width').f64() == 64
 	assert pick(res, 'height').f64() == 32
 	assert str_of(pick(res, 'path')) == 'shots/a.png'
+}
+
+// 100k varlık: sorgu yanıtı istek arenasına sığmalı; kullanılan bayt 256 B/varlık bütçesinin altında kalır.
+fn test_query_entities_at_100k_scale() {
+	mut s := Server.new(sim.Config{ capacity: 100_000 }) or { panic(err) }
+	defer {
+		s.close()
+	}
+	for i in 0 .. 100_000 {
+		r := call(mut s, '{"jsonrpc":"2.0","id":${i + 1},"method":"entity.spawn","params":{"components":{"Transform":{"x":1}}}}')
+		assert has(r, 'result'), 'spawn ${i} basarisiz'
+	}
+	out := s.handle('{"jsonrpc":"2.0","id":7,"method":"query.entities","params":{"with":["Transform"]}}') or { panic('yanıt yok') }
+	// Ölçüm ayrıştırmadan önce: yalnız yanıt ağacının kullandığı bayt sayılır.
+	used := arena_used()
+	assert used <= u64(100_000) * 256, 'sorgu yanıtı ${used} bayt kullandı; bütçe 256 B/varlık'
+	r := parse(out) or { panic('yanıt JSON degil') }
+	assert !has(r, 'error'), 'sorgu hata dondu'
+	res := result_of(r)
+	assert pick(res, 'count').f64() == 100_000
+	assert items(pick(res, 'entities')).len == 100_000
+}
+
+// Yanıt arenaya sığmazsa hata yanıtı gerçek istek id'sini taşır ve sınır ipucunu verir.
+fn test_too_large_response_keeps_request_id() {
+	mut s := Server.new(sim.Config{ capacity: 256 }) or { panic(err) }
+	defer {
+		s.close()
+	}
+	for i in 0 .. 200 {
+		_ = call(mut s, '{"jsonrpc":"2.0","id":${i + 1},"method":"entity.spawn","params":{"components":{"Transform":{"x":1}}}}')
+	}
+	arena_set(s.req_region, 8192)
+	out := s.handle('{"jsonrpc":"2.0","id":42,"method":"query.entities","params":{"with":["Transform"]}}') or {
+		panic('yanıt yok')
+	}
+	r := parse(out) or { panic('yanıt JSON degil: ${out}') }
+	assert error_code(r) == -32600, out
+	assert pick(r, 'id').f64() == 42, out
+	assert str_of(at(at(at(r, 'error'), 'data'), 'hint')) == 'response too large; use the limit parameter', out
+	arena_set(s.req_region, request_arena_bytes(s.cfg))
+}
+
+// Metin id'si 64 bayttan uzunsa dönüş yanıtında kırpılır; bellek güvenliği için yeterli, id kaybolmaz.
+fn test_too_large_response_truncates_long_string_id() {
+	mut s := Server.new(sim.Config{ capacity: 256 }) or { panic(err) }
+	defer {
+		s.close()
+	}
+	for i in 0 .. 200 {
+		_ = call(mut s, '{"jsonrpc":"2.0","id":${i + 1},"method":"entity.spawn","params":{"components":{"Transform":{"x":1}}}}')
+	}
+	arena_set(s.req_region, 8192)
+	long_id := 'x'.repeat(80)
+	out := s.handle('{"jsonrpc":"2.0","id":"${long_id}","method":"query.entities","params":{"with":["Transform"]}}') or {
+		panic('yanıt yok')
+	}
+	r := parse(out) or { panic('yanıt JSON degil: ${out}') }
+	assert error_code(r) == -32600, out
+	assert str_of(pick(r, 'id')) == 'x'.repeat(64), out
+	arena_set(s.req_region, request_arena_bytes(s.cfg))
 }

@@ -4,8 +4,49 @@ import sim
 import ecs
 import memory
 
-// İstek arenasının boyutu: her istek bu bölgede ayrıştırılır ve yanıtlanır.
-const request_arena_bytes = u64(4 << 20)
+// İstek arenasının boyutu: her istek bu bölgede ayrıştırılır ve yanıtlanır. Taban 4 MiB; büyük kapasitede
+// kapasite başına 256 bayt (100k varlıkta tüm varlıkları listeleyen sorgu yanıtı sığar, bkz. test).
+const request_arena_floor = u64(4 << 20)
+const request_arena_per_entity = u64(256)
+
+fn request_arena_bytes(cfg sim.Config) u64 {
+	scaled := u64(cfg.capacity) * request_arena_per_entity
+	return if scaled > request_arena_floor { scaled } else { request_arena_floor }
+}
+
+// Yanıt kurulamadığında da hata yanıtında gerçek id yazılabilsin diye istek id'sinin arena dışı kopyası.
+// Metin id'si 64 bayta kırpılır (yalnız arena dolduğunda kullanılan yolda); NUL sonlu tutulur.
+struct SavedId {
+mut:
+	kind int // 0: null, 1: sayı, 2: metin
+	num  f64
+	text [65]u8
+	tlen int
+}
+
+fn save_id(id Val) SavedId {
+	mut s := SavedId{}
+	if id.is_number() {
+		s.kind = 1
+		s.num = id.f64()
+	} else if id.is_string() {
+		t := id.str()
+		s.kind = 2
+		s.tlen = if t.len > 64 { 64 } else { t.len }
+		for i in 0 .. s.tlen {
+			s.text[i] = t[i]
+		}
+	}
+	return s
+}
+
+fn (s SavedId) val() Val {
+	return match s.kind {
+		1 { num(s.num) }
+		2 { str_val(unsafe { tos(&u8(&s.text[0]), s.tlen) }) }
+		else { null_val() }
+	}
+}
 
 // JSON-RPC sunucusu: bir sim.Sim, onun bellek bölgesini ve istek arenasını sahiplenir. İstekler tek tek
 // işlenir; her istekten sonra kuyruk boşalmış olur. cJSON kancaları süreç geneldir: aynı anda yalnız bir
@@ -27,7 +68,7 @@ pub fn Server.new(cfg sim.Config) !Server {
 	reg := ecs.core_registry()!
 	need := cfg.bytes_needed(&reg)
 	region := memory.reserve(need) or { return error('protocol: bölge ayrilamadi (${need} bayt)') }
-	req_region := memory.reserve(request_arena_bytes) or {
+	req_region := memory.reserve(request_arena_bytes(cfg)) or {
 		_ = memory.release(region)
 		return error('protocol: istek arenasi ayrilamadi')
 	}
@@ -37,7 +78,7 @@ pub fn Server.new(cfg sim.Config) !Server {
 		_ = memory.release(req_region)
 		return error('protocol: Sim kurulamadi')
 	}
-	arena_set(req_region, request_arena_bytes)
+	arena_set(req_region, request_arena_bytes(cfg))
 	return Server{
 		cfg:        cfg
 		reg:        reg
@@ -107,19 +148,19 @@ pub fn (mut s Server) handle(line string) ?string {
 	// derinlik ve NUL denetimi decode'a girmeden yapılır.
 	too_deep, has_nul := scan_json(text)
 	if too_deep {
-		return error_line(null_val(), rpc_error(code_parse, 'parse error', hint_data('JSON nesting deeper than 64')))
+		return error_line(null_val(), SavedId{}, rpc_error(code_parse, 'parse error', hint_data('JSON nesting deeper than 64')))
 	}
 	if has_nul {
-		return error_line(null_val(), rpc_error(code_parse, 'parse error', hint_data('NUL characters are not allowed')))
+		return error_line(null_val(), SavedId{}, rpc_error(code_parse, 'parse error', hint_data('NUL characters are not allowed')))
 	}
 	req := parse(text) or {
 		if exhausted() {
 			return too_large_line
 		}
-		return error_line(null_val(), rpc_error(code_parse, 'parse error', hint_data('request line is not valid JSON')))
+		return error_line(null_val(), SavedId{}, rpc_error(code_parse, 'parse error', hint_data('request line is not valid JSON')))
 	}
 	if !req.is_object() {
-		return error_line(null_val(),
+		return error_line(null_val(), SavedId{},
 			invalid_request('request must be a single JSON object; batches are not supported'))
 	}
 	// id alani yoksa istek bildirimdir: yürütülür ama yanıt yazilmaz.
@@ -127,25 +168,27 @@ pub fn (mut s Server) handle(line string) ?string {
 	has_id := id_v != none
 	id := id_v or { null_val() }
 	if has_id && !is_valid_id(id) {
-		return error_line(null_val(), invalid_request('id must be a number, a string or null'))
+		return error_line(null_val(), SavedId{}, invalid_request('id must be a number, a string or null'))
 	}
+	// Kimlik arena dolmadan önce kopyalanır: yanıt kurulamazsa gerçek id hata yanıtında kullanılır.
+	saved := save_id(id)
 	// Surum uyesi yoksa ya da "2.0" degilse istek yurutulmez; bildirimse yanit da yazilmaz.
 	if !is_jsonrpc_20(req) {
 		if !has_id {
 			return none
 		}
-		return error_line(id, invalid_request('jsonrpc member must be "2.0"'))
+		return error_line(id, saved, invalid_request('jsonrpc member must be "2.0"'))
 	}
 	result := s.invoke(req) or {
 		if !has_id {
 			return none
 		}
-		return error_line(id, err)
+		return error_line(id, saved, err)
 	}
 	if !has_id {
 		return none
 	}
-	return success_line(id, result)
+	return success_line(id, saved, result)
 }
 
 // Yöntemi ve parametreleri doğrular, ilgili işleyiciye yönlendirir.
@@ -265,8 +308,26 @@ const closed_line = '{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message"
 
 const too_large_line ='{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid request","data":{"hint":"request or response too large"}}}'
 
-// Yanıt kodlanır; arena dolduysa sabit satır döner.
-fn finish_line(m Val) string {
+// Yanıt kodlanır; arena dolduysa yanıt yeniden kurulur: arena sıfırlanır, gerçek id ile -32600 hatası yazılır.
+fn finish_line(m Val, saved SavedId) string {
+	line := print(m)
+	if !exhausted() {
+		return line
+	}
+	return too_large_response(saved)
+}
+
+// Yalnız kısa bir hata nesnesi kurar; yeni arenada sığar. Bu da sığmazsa id'siz sabit satır döner.
+fn too_large_response(saved SavedId) string {
+	arena_reset()
+	e := obj()
+	e.set('code', num(f64(code_invalid_request)))
+	e.set('message', str_val('invalid request'))
+	e.set('data', hint_data('response too large; use the limit parameter'))
+	m := obj()
+	m.set('jsonrpc', str_val('2.0'))
+	m.set('id', saved.val())
+	m.set('error', e)
 	line := print(m)
 	if exhausted() {
 		return too_large_line
@@ -274,18 +335,18 @@ fn finish_line(m Val) string {
 	return line
 }
 
-fn success_line(id Val, result Val) string {
+fn success_line(id Val, saved SavedId, result Val) string {
 	mut m := obj()
 	m.set('jsonrpc', str_val('2.0'))
 	// id istek ağacına aittir; yanıta kopyası konur ki kardeş bağlantıları bozulmasın.
 	m.set('id', dup(id))
 	m.set('result', result)
-	return finish_line(m)
+	return finish_line(m, saved)
 }
 
 // Hata yanıtı; IError RpcError degilse sunucu içi hata olarak raporlanır.
 // Alanlar smartcast ile okunur.
-fn error_line(id Val, err IError) string {
+fn error_line(id Val, saved SavedId, err IError) string {
 	mut code := code_internal
 	mut message := 'internal error'
 	mut data := hint_data('unexpected error')
@@ -302,5 +363,5 @@ fn error_line(id Val, err IError) string {
 	m.set('jsonrpc', str_val('2.0'))
 	m.set('id', dup(id))
 	m.set('error', e)
-	return finish_line(m)
+	return finish_line(m, saved)
 }

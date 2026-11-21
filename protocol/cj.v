@@ -35,6 +35,7 @@ fn C.cJSON_GetStringValue(item &C.cJSON) &char
 fn C.vcore_cj_set(base &u8, cap u64)
 fn C.vcore_cj_reset()
 fn C.vcore_cj_exhausted() int
+fn C.vcore_cj_used() u64
 fn C.vcore_cj_install()
 fn C.vcore_cj_child(item &C.cJSON) &C.cJSON
 fn C.vcore_cj_next(item &C.cJSON) &C.cJSON
@@ -258,6 +259,11 @@ pub fn print(v Val) string {
 		return ''
 	}
 	return view(p)
+}
+
+// Son isteğin arenada kullandığı bayt (hizalama dahil).
+pub fn arena_used() u64 {
+	return C.vcore_cj_used()
 }
 
 // İstek arenası bu istekte yetmediyse true.
