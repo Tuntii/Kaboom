@@ -18,6 +18,9 @@ fn C.glGetError() u32
 
 fn C.vcore_gl_set(slot int, p voidptr)
 fn C.vcore_gl_get(slot int) voidptr
+fn C.vcore_gl_clear()
+fn C.vcore_gl_ready() int
+fn C.vcore_gl_set_ready(v int)
 
 pub const gl_fragment_shader = u32(0x8B30)
 pub const gl_vertex_shader = u32(0x8B31)
@@ -91,47 +94,48 @@ type FnVertexAttribPointer = fn (u32, int, u32, u8, int, voidptr)
 type FnVertexAttribDivisor = fn (u32, u32)
 type FnDrawArraysInstanced = fn (u32, int, int, int)
 
-fn load_proc(slot int, name string) ! {
-	p := platform.gl_proc(&char(name.str))
-	if p == unsafe { nil } {
-		return error('GL fonksiyonu yok: ${name}')
+// Yuva sırası slot_* sabitleriyle aynıdır: gl_fn_names[slot_x] == 'glX'.
+const gl_fn_names = ['glCreateShader', 'glShaderSource', 'glCompileShader', 'glGetShaderiv',
+	'glGetShaderInfoLog', 'glDeleteShader', 'glCreateProgram', 'glAttachShader', 'glLinkProgram',
+	'glGetProgramiv', 'glGetProgramInfoLog', 'glUseProgram', 'glDeleteProgram',
+	'glGetUniformLocation', 'glUniform4f', 'glGenVertexArrays', 'glBindVertexArray',
+	'glDeleteVertexArrays', 'glGenBuffers', 'glBindBuffer', 'glBufferData', 'glBufferSubData',
+	'glDeleteBuffers', 'glEnableVertexAttribArray', 'glVertexAttribPointer',
+	'glVertexAttribDivisor', 'glDrawArraysInstanced']
+
+// names[i] işaretçisini yuva i'ye yükler. Eksik olanların TAMAMINI tek hatada virgüllü listeler;
+// hata durumunda tüm yuvalar ve hazır bayrağı sıfırlanır (kısmi durum kalmaz).
+fn load_names(names []string) ! {
+	C.vcore_gl_clear()
+	mut missing := []string{}
+	for i, name in names {
+		p := platform.gl_proc(&char(name.str))
+		if p == unsafe { nil } {
+			missing << name
+			continue
+		}
+		C.vcore_gl_set(i, p)
 	}
-	C.vcore_gl_set(slot, p)
+	if missing.len > 0 {
+		C.vcore_gl_clear()
+		return error('GL fonksiyonu yok: ${missing.join(', ')}')
+	}
 }
 
 // Tüm GL 2.0+ fonksiyonlarını yükler. Bir context current iken çağrılmalı.
-// Eksik ilk fonksiyonda adıyla hata döner.
+// Başarıda gl_ready() true olur; hatada false kalır.
 pub fn load_gl() ! {
-	load_proc(slot_create_shader, 'glCreateShader')!
-	load_proc(slot_shader_source, 'glShaderSource')!
-	load_proc(slot_compile_shader, 'glCompileShader')!
-	load_proc(slot_get_shaderiv, 'glGetShaderiv')!
-	load_proc(slot_get_shader_info_log, 'glGetShaderInfoLog')!
-	load_proc(slot_delete_shader, 'glDeleteShader')!
-	load_proc(slot_create_program, 'glCreateProgram')!
-	load_proc(slot_attach_shader, 'glAttachShader')!
-	load_proc(slot_link_program, 'glLinkProgram')!
-	load_proc(slot_get_programiv, 'glGetProgramiv')!
-	load_proc(slot_get_program_info_log, 'glGetProgramInfoLog')!
-	load_proc(slot_use_program, 'glUseProgram')!
-	load_proc(slot_delete_program, 'glDeleteProgram')!
-	load_proc(slot_get_uniform_location, 'glGetUniformLocation')!
-	load_proc(slot_uniform4f, 'glUniform4f')!
-	load_proc(slot_gen_vertex_arrays, 'glGenVertexArrays')!
-	load_proc(slot_bind_vertex_array, 'glBindVertexArray')!
-	load_proc(slot_delete_vertex_arrays, 'glDeleteVertexArrays')!
-	load_proc(slot_gen_buffers, 'glGenBuffers')!
-	load_proc(slot_bind_buffer, 'glBindBuffer')!
-	load_proc(slot_buffer_data, 'glBufferData')!
-	load_proc(slot_buffer_sub_data, 'glBufferSubData')!
-	load_proc(slot_delete_buffers, 'glDeleteBuffers')!
-	load_proc(slot_enable_vertex_attrib_array, 'glEnableVertexAttribArray')!
-	load_proc(slot_vertex_attrib_pointer, 'glVertexAttribPointer')!
-	load_proc(slot_vertex_attrib_divisor, 'glVertexAttribDivisor')!
-	load_proc(slot_draw_arrays_instanced, 'glDrawArraysInstanced')!
+	load_names(gl_fn_names)!
+	C.vcore_gl_set_ready(1)
 }
 
-// GL 2.0+ sarmalayıcıları: ince, imzaları C ile aynı. Çağrılmadan önce load_gl başarılı olmalı.
+// Her fonksiyon yüklendiyse true. Çağıran kurulumda bir kez denetler.
+pub fn gl_ready() bool {
+	return C.vcore_gl_ready() == 1
+}
+
+// GL 2.0+ sarmalayıcıları: ince, imzaları C ile aynı.
+// Önkoşul: gl_ready() true olmalı. Çağıran bunu kurulumda bir kez denetler; sarmalayıcılarda denetim yok (tick yolu).
 
 pub fn create_shader(kind u32) u32 {
 	f := unsafe { FnCreateShader(C.vcore_gl_get(slot_create_shader)) }

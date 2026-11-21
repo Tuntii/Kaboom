@@ -59,3 +59,44 @@ fn test_compile_broken_fragment_reports_log() {
 	}
 	assert false, 'bozuk fragment shader kabul edildi'
 }
+
+// Pencere yokken context yoktur; wglGetProcAddress NULL döner, hazır bayrağı kalkık kalır.
+fn test_gl_not_ready_without_context() {
+	load_gl() or {
+		assert !gl_ready()
+		assert err.msg().contains('glCreateShader')
+		assert err.msg().contains('glDrawArraysInstanced')
+		return
+	}
+	assert false, 'context yokken load_gl basarili dondu'
+}
+
+fn test_gl_ready_after_load() {
+	mut w := platform.Window.new(platform.WindowConfig{ visible: false, width: 200, height: 150 }) or {
+		eprintln('atlandi: GL yok: ${err}')
+		return
+	}
+	defer { w.close() }
+	load_gl() or { assert false, 'load_gl: ${err}' }
+	assert gl_ready()
+}
+
+// Hata yolu: iki sahte isim tek hatada listelenir, hazır bayrağı kalkar ve yuvalar sıfırlanır.
+fn test_load_names_reports_all_missing_and_clears() {
+	mut w := platform.Window.new(platform.WindowConfig{ visible: false, width: 200, height: 150 }) or {
+		eprintln('atlandi: GL yok: ${err}')
+		return
+	}
+	defer { w.close() }
+	load_gl() or { assert false, 'load_gl: ${err}' }
+	load_names(['glNope1', 'glCreateShader', 'glNope2']) or {
+		assert err.msg().contains('glNope1')
+		assert err.msg().contains('glNope2')
+		assert !err.msg().contains('glCreateShader')
+		assert !gl_ready()
+		// Sonraki testler yüklü durumla çalışsın diye yeniden yükle.
+		load_gl() or { assert false, 'yeniden load_gl: ${err}' }
+		return
+	}
+	assert false, 'sahte isimler kabul edildi'
+}
