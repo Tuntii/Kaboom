@@ -171,8 +171,11 @@ pub fn (mut s ComponentStore) set_raw(row u32, field u16, bits u64) {
 	}
 }
 
-// f32 kolonun başlangıç adresi; 64 hizalıdır.
+// f32 kolonun başlangıç adresi; 64 hizalıdır. field >= field_count() ise nil döner; çağıran bunu denetlemelidir.
 pub fn (s &ComponentStore) column_f32(field u16) &f32 {
+	if field >= s.field_n {
+		return unsafe { nil }
+	}
 	return unsafe { &f32(s.columns[field]) }
 }
 

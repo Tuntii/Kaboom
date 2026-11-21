@@ -322,7 +322,7 @@ fn test_schema_components_and_commands() {
 	}
 	comps := pick(result_of(call(mut s, '{"jsonrpc":"2.0","id":1,"method":"schema.components"}')),
 		'components').as_array()
-	assert comps.len == 2
+	assert comps.len == 3
 	assert str_of(at(comps[0], 'name')) == 'Transform'
 	fields := at(comps[0], 'fields').as_array()
 	assert str_of(at(fields[2], 'name')) == 'prev_x'
@@ -378,6 +378,36 @@ fn test_f32_input_out_of_range_is_rejected_unchanged() {
 	g := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":4,"method":"entity.get","params":{"entity":0}}'))
 	assert pick(pick(pick(g, 'components').as_map(), 'Transform').as_map(), 'x').f64() == 2
+}
+
+// Sprite.r [0, 1] dışındayken set reddedilir, değer değişmez; içindeyken kabul edilir.
+fn test_range_violation_on_set_is_rejected_unchanged() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	_ = call(mut s,
+		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Sprite":{"r":0.25}}}}')
+	bad := call(mut s,
+		'{"jsonrpc":"2.0","id":2,"method":"component.set","params":{"entity":0,"component":"Sprite","field":"r","value":1.5}}')
+	assert error_code(bad) == -32602
+	assert str_of(at(at(at(bad, 'error'), 'data'), 'hint')) == 'value must be in [0, 1]'
+	assert 'result' in call(mut s,
+		'{"jsonrpc":"2.0","id":3,"method":"component.set","params":{"entity":0,"component":"Sprite","field":"r","value":0.5}}').as_map()
+	g := result_of(call(mut s,
+		'{"jsonrpc":"2.0","id":4,"method":"entity.get","params":{"entity":0}}'))
+	assert pick(pick(pick(g, 'components').as_map(), 'Sprite').as_map(), 'r').f64() == 0.5
+}
+
+// Spawn'da aralık dışı değer hata döner ve hiçbir varlık oluşmaz.
+fn test_range_violation_on_spawn_creates_nothing() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	assert error_code(call(mut s,
+		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Sprite":{"size":-1}}}}')) == -32602
+	assert s.engine.world.alive_count() == 0
 }
 
 fn test_jsonrpc_member_must_be_2_0() {

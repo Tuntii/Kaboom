@@ -87,6 +87,18 @@ fn test_bytes_needed_is_enough() {
 	_ = Sim.new(mut a, &reg, cfg) or { panic('Sim.new tam bytes_needed ile basarisiz') }
 }
 
+// Transform/Body yoksa Sim kurulmaz ve parent bellek ayrılmaz.
+fn test_new_none_without_transform_or_body() {
+	reg := ecs.Registry{}
+	region := memory.reserve(1 << 20) or { panic('reserve basarisiz') }
+	defer { memory.release(region) }
+	mut a := memory.LinearArena.new(region, 1 << 20)
+	if _ := Sim.new(mut a, &reg, Config{ capacity: 16, queue_capacity: 16, record_capacity: 16 }) {
+		assert false
+	}
+	assert a.used() == 0
+}
+
 fn test_new_failure_rewinds_parent() {
 	reg := ecs.core_registry() or { panic(err) }
 	cfg := Config{

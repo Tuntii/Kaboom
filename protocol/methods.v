@@ -511,6 +511,10 @@ fn (s &Server) plan_component(name string, values map[string]json2.Any) !Plan {
 			return invalid_params('field ${name}.${fname} has type ${f.typ.name()}, only f32 is supported over JSON')
 		}
 		bits := f32_bits(v) or { return invalid_params('${name}.${fname} must be a finite number') }
+		x := v as f64
+		if x < f.min || x > f.max {
+			return invalid_params('value must be in [${range_text(f.min)}, ${range_text(f.max)}]')
+		}
 		writes << FieldWrite{
 			field: u16(fi)
 			bits:  bits
@@ -635,6 +639,14 @@ fn f32_json(bits u64) json2.Any {
 		return json2.Any('-inf')
 	}
 	return json2.Any(x)
+}
+
+// Tam sayı sınırları "0" biçiminde, ondalıklılar olduğu gibi yazılır.
+fn range_text(x f64) string {
+	if x == math.floor(x) {
+		return '${i64(x)}'
+	}
+	return '${x}'
 }
 
 fn hash_hex(h u64) string {

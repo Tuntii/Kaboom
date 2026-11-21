@@ -2,7 +2,7 @@ module ecs
 
 fn test_core_registry_layout() {
 	r := core_registry()!
-	assert r.count() == 2
+	assert r.count() == 3
 	t := r.component(transform_id)?
 	assert t.name == 'Transform'
 	assert t.fields.map(it.name) == ['x', 'y', 'prev_x', 'prev_y']
@@ -14,6 +14,11 @@ fn test_core_registry_layout() {
 	assert r.find('Body')? == body_id
 	assert r.find('Nope') == none
 	assert t.field_index('prev_y')? == 3
+	sp := r.component(sprite_id)?
+	assert sp.name == 'Sprite'
+	assert sp.fields.map(it.name) == ['size', 'r', 'g', 'b']
+	assert sp.fields[0].min == 0 && sp.fields[0].max == 1000 && sp.fields[0].unit == 'm'
+	assert sp.fields[1].max == 1
 }
 
 struct Ranged {
