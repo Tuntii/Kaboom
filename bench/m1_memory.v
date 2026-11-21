@@ -13,7 +13,6 @@ const arena_bench_size = u64(128) * 1024 * 1024
 const ops = u32(100000)
 const warmup = 10
 const iterations = 200
-const results_dir = 'bench/results'
 
 fn main() {
 	label := if os.args.len > 1 { os.args[1] } else { 'local' }
@@ -28,16 +27,17 @@ fn main() {
 	]
 	date := time.now().custom_format('YYYY-MM-DD-HHmmss')
 	report := benchkit.Report{
+		suite:     'm1_memory'
 		label:     label
 		date:      date
 		v_version: 'V 0.5.2 ' + @VHASH
 		results:   results
 	}
-	path := benchkit.write_report(report, results_dir) or { panic('rapor yazilamadi: ${err}') }
+	path := benchkit.write_report(report, benchkit.results_dir()) or { panic('rapor yazilamadi: ${err}') }
 
 	print_table(report)
 	println('rapor: ${path}')
-	if prev := benchkit.latest_report(results_dir, path) {
+	if prev := benchkit.latest_report(benchkit.results_dir(), 'm1_memory', path) {
 		println('')
 		println('onceki rapora gore (${prev.date}):')
 		print(benchkit.compare(prev, report))
