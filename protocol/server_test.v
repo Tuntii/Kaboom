@@ -1,7 +1,6 @@
 module protocol
 
 import os
-import x.json2
 import sim
 import cmd
 import ecs
@@ -13,36 +12,49 @@ fn new_server() Server {
 	}
 }
 
-// Yanıt satırını JSON olarak çözer; yanıt yoksa test düşer.
-fn call(mut s Server, line string) json2.Any {
+// Yanıt satırını Val olarak çözer; yanıt yoksa test düşer. Değer bir sonraki handle çağrısına kadar geçerlidir.
+fn call(mut s Server, line string) Val {
 	out := s.handle(line) or { panic('yanıt yok: ${line}') }
-	return json2.decode[json2.Any](out) or { panic(err) }
+	return parse(out) or { panic('yanıt JSON degil: ${out}') }
 }
 
-// Anahtar yoksa null döner; sum type indekslemesi için.
-fn pick(m map[string]json2.Any, key string) json2.Any {
-	return m[key] or { json2.Any(json2.null) }
+// Anahtar yoksa null döner.
+fn pick(v Val, key string) Val {
+	return v.get(key) or { null_val() }
 }
 
-fn at(a json2.Any, key string) json2.Any {
-	return pick(a.as_map(), key)
+fn at(v Val, key string) Val {
+	return pick(v, key)
 }
 
-// Metin değeri; sayı ya da başka tip gelirse panik (test düşer).
-fn str_of(a json2.Any) string {
-	return a as string
+fn has(v Val, key string) bool {
+	return v.get(key) != none
+}
+
+// Metin değeri; arena sıfırlanınca bozulmaması için kopyalanır.
+fn str_of(v Val) string {
+	return v.str().clone()
+}
+
+// Dizi ya da nesnenin alt düğümleri (dizi öğeleri için).
+fn items(v Val) []Val {
+	mut out := []Val{}
+	mut c := v.first()
+	for !c.is_nil() {
+		out << c
+		c = c.next()
+	}
+	return out
 }
 
 // Hata kodu; yanıt hata içermiyorsa -1.
-fn error_code(a json2.Any) int {
-	if 'error' !in a.as_map() {
-		return -1
-	}
-	return at(at(a, 'error'), 'code').int()
+fn error_code(v Val) int {
+	e := v.get('error') or { return -1 }
+	return int(pick(e, 'code').f64())
 }
 
-fn result_of(a json2.Any) map[string]json2.Any {
-	return at(a, 'result').as_map()
+fn result_of(v Val) Val {
+	return pick(v, 'result')
 }
 
 fn test_spawn_with_components_then_get() {
@@ -52,14 +64,14 @@ fn test_spawn_with_components_then_get() {
 	}
 	r := call(mut s,
 		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":1.5},"Body":{"vx":2}}}}')
-	assert pick(result_of(r), 'entity').u64() == 0
+	assert pick(result_of(r), 'entity').f64() == 0
 	g := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":2,"method":"entity.get","params":{"entity":0}}'))
-	comps := pick(g, 'components').as_map()
-	tr := pick(comps, 'Transform').as_map()
+	comps := pick(g, 'components')
+	tr := pick(comps, 'Transform')
 	assert pick(tr, 'x').f64() == 1.5
 	assert pick(tr, 'y').f64() == 0
-	assert pick(pick(comps, 'Body').as_map(), 'vx').f64() == 2
+	assert pick(pick(comps, 'Body'), 'vx').f64() == 2
 }
 
 fn test_errors_are_structured() {
@@ -69,7 +81,7 @@ fn test_errors_are_structured() {
 	}
 	bad := call(mut s, '{bozuk')
 	assert error_code(bad) == -32700
-	assert at(bad, 'id') is json2.Null
+	assert at(bad, 'id').is_null()
 	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":3,"method":"nope"}')) == -32601
 	// Dünya bos: entity 0 henüz yok.
 	assert error_code(call(mut s,
@@ -91,7 +103,7 @@ fn test_errors_are_structured() {
 	// Hata yanıti data alaninda component, field ve hint taşır.
 	data := at(at(call(mut s,
 		'{"jsonrpc":"2.0","id":10,"method":"component.set","params":{"entity":0,"component":"Transform","field":"prev_x","value":1}}'),
-		'error'), 'data').as_map()
+		'error'), 'data')
 	assert str_of(pick(data, 'component')) == 'Transform'
 	assert str_of(pick(data, 'field')) == 'prev_x'
 	assert str_of(pick(data, 'hint')) != ''
@@ -105,8 +117,8 @@ fn test_blank_and_crlf_lines() {
 	assert s.handle('') == none
 	assert s.handle('\r') == none
 	r := call(mut s, '{"jsonrpc":"2.0","id":5,"method":"sim.state_hash"}\r')
-	assert at(r, 'id').u64() == 5
-	assert 'result' in r.as_map()
+	assert at(r, 'id').f64() == 5
+	assert has(r, 'result')
 	// id'siz istek bildirimdir: yanıt yok, ama yürütülür.
 	assert s.handle('{"jsonrpc":"2.0","method":"sim.step","params":{"n":1}}') == none
 	assert s.engine.tick() == 1
@@ -140,7 +152,7 @@ fn test_malformed_input_never_panics() {
 	]
 	for line in lines {
 		out := s.handle(line) or { continue }
-		json2.decode[json2.Any](out) or { panic('yanıt JSON degil: ${out}') }
+		parse(out) or { panic('yanıt JSON degil: ${out}') }
 	}
 }
 
@@ -160,7 +172,7 @@ fn test_capacity_full_spawn() {
 	}
 	for i in 0 .. 64 {
 		r := call(mut s, '{"jsonrpc":"2.0","id":${i},"method":"entity.spawn"}')
-		assert 'result' in r.as_map()
+		assert has(r, 'result')
 	}
 	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":99,"method":"entity.spawn"}')) == 1006
 	assert s.engine.world.alive_count() == 64
@@ -178,8 +190,8 @@ fn test_queue_full_spawn_with_components() {
 		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":1},"Body":{"vx":1}}}}')) == 1007
 	assert s.engine.world.alive_count() == 0
 	// 1 spawn + 1 komut (Body) = 2 <= 2.
-	assert 'result' in call(mut s,
-		'{"jsonrpc":"2.0","id":2,"method":"entity.spawn","params":{"components":{"Body":{}}}}').as_map()
+	assert has(call(mut s,
+		'{"jsonrpc":"2.0","id":2,"method":"entity.spawn","params":{"components":{"Body":{}}}}'), 'result')
 }
 
 fn test_query_and_step() {
@@ -194,16 +206,16 @@ fn test_query_and_step() {
 		'{"jsonrpc":"2.0","id":3,"method":"entity.spawn","params":{"components":{"Body":{}}}}')
 	q := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":4,"method":"query.entities","params":{"with":["Body"]}}'))
-	ids := pick(q, 'entities').as_array()
+	ids := items(pick(q, 'entities'))
 	assert ids.len == 2
-	assert ids[0].u64() == 0
-	assert ids[1].u64() == 2
-	assert pick(q, 'count').int() == 2
+	assert ids[0].f64() == 0
+	assert ids[1].f64() == 2
+	assert pick(q, 'count').f64() == 2
 	lim := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":5,"method":"query.entities","params":{"with":["Body"],"limit":1}}'))
-	assert pick(lim, 'entities').as_array().len == 1
-	assert pick(lim, 'entities').as_array()[0].u64() == 0
-	assert pick(lim, 'count').int() == 2
+	assert items(pick(lim, 'entities')).len == 1
+	assert items(pick(lim, 'entities'))[0].f64() == 0
+	assert pick(lim, 'count').f64() == 2
 	assert error_code(call(mut s,
 		'{"jsonrpc":"2.0","id":6,"method":"query.entities","params":{"with":["Nope"]}}')) == 1002
 	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":7,"method":"sim.step","params":{"n":0}}')) == -32602
@@ -211,7 +223,7 @@ fn test_query_and_step() {
 		'{"jsonrpc":"2.0","id":8,"method":"sim.step","params":{"n":1000001}}')) == -32602
 	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":9,"method":"sim.step"}')) == -32602
 	t := result_of(call(mut s, '{"jsonrpc":"2.0","id":10,"method":"sim.step","params":{"n":10}}'))
-	assert pick(t, 'tick').u64() == 10
+	assert pick(t, 'tick').f64() == 10
 }
 
 fn test_record_start_requires_pristine_world() {
@@ -224,7 +236,7 @@ fn test_record_start_requires_pristine_world() {
 	_ = call(mut s, '{"jsonrpc":"2.0","id":2,"method":"entity.spawn"}')
 	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":3,"method":"record.start"}')) == 1008
 	_ = call(mut s, '{"jsonrpc":"2.0","id":4,"method":"sim.reset"}')
-	assert 'result' in call(mut s, '{"jsonrpc":"2.0","id":5,"method":"record.start"}').as_map()
+	assert has(call(mut s, '{"jsonrpc":"2.0","id":5,"method":"record.start"}'), 'result')
 	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":6,"method":"record.start"}')) == 1008
 }
 
@@ -246,14 +258,16 @@ fn test_record_roundtrip_and_replay_run() {
 	_ = call(mut s, '{"jsonrpc":"2.0","id":4,"method":"sim.step","params":{"n":100}}')
 	stop := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":5,"method":"record.stop","params":{"path":"${path}"}}'))
-	assert pick(stop, 'commands').int() == 6
-	assert pick(stop, 'end_tick').u64() == 100
+	assert pick(stop, 'commands').f64() == 6
+	assert pick(stop, 'end_tick').f64() == 100
+	stop_hash := str_of(pick(stop, 'hash'))
 	live := result_of(call(mut s, '{"jsonrpc":"2.0","id":6,"method":"sim.state_hash"}'))
-	assert str_of(pick(stop, 'hash')) == str_of(pick(live, 'hash'))
+	live_hash := str_of(pick(live, 'hash'))
+	assert stop_hash == live_hash
 	replay := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":7,"method":"replay.run","params":{"path":"${path}"}}'))
-	assert pick(replay, 'end_tick').u64() == 100
-	assert str_of(pick(replay, 'hash')) == str_of(pick(live, 'hash'))
+	assert pick(replay, 'end_tick').f64() == 100
+	assert str_of(pick(replay, 'hash')) == live_hash
 }
 
 fn test_io_errors_map_to_1010() {
@@ -279,13 +293,13 @@ fn test_component_add_remove_set() {
 		'{"jsonrpc":"2.0","id":2,"method":"component.add","params":{"entity":0,"component":"Body"}}')) == 1004
 	assert error_code(call(mut s,
 		'{"jsonrpc":"2.0","id":3,"method":"component.add","params":{"entity":0,"component":"Nope"}}')) == 1002
-	assert 'result' in call(mut s,
-		'{"jsonrpc":"2.0","id":4,"method":"component.add","params":{"entity":0,"component":"Transform","values":{"x":2}}}').as_map()
+	assert has(call(mut s,
+		'{"jsonrpc":"2.0","id":4,"method":"component.add","params":{"entity":0,"component":"Transform","values":{"x":2}}}'), 'result')
 	g := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":5,"method":"entity.get","params":{"entity":0}}'))
-	assert pick(pick(pick(g, 'components').as_map(), 'Transform').as_map(), 'x').f64() == 2
-	assert 'result' in call(mut s,
-		'{"jsonrpc":"2.0","id":6,"method":"component.remove","params":{"entity":0,"component":"Body"}}').as_map()
+	assert pick(pick(pick(g, 'components'), 'Transform'), 'x').f64() == 2
+	assert has(call(mut s,
+		'{"jsonrpc":"2.0","id":6,"method":"component.remove","params":{"entity":0,"component":"Body"}}'), 'result')
 	assert error_code(call(mut s,
 		'{"jsonrpc":"2.0","id":7,"method":"component.remove","params":{"entity":0,"component":"Body"}}')) == 1005
 	assert error_code(call(mut s,
@@ -294,8 +308,8 @@ fn test_component_add_remove_set() {
 		'{"jsonrpc":"2.0","id":9,"method":"component.set","params":{"entity":0,"component":"Transform","field":"zz","value":1}}')) == 1003
 	assert error_code(call(mut s,
 		'{"jsonrpc":"2.0","id":10,"method":"component.set","params":{"entity":0,"component":"Transform","field":"x","value":"a"}}')) == -32602
-	assert 'result' in call(mut s,
-		'{"jsonrpc":"2.0","id":11,"method":"entity.despawn","params":{"entity":0}}').as_map()
+	assert has(call(mut s,
+		'{"jsonrpc":"2.0","id":11,"method":"entity.despawn","params":{"entity":0}}'), 'result')
 	assert error_code(call(mut s,
 		'{"jsonrpc":"2.0","id":12,"method":"entity.despawn","params":{"entity":0}}')) == 1001
 }
@@ -320,16 +334,16 @@ fn test_schema_components_and_commands() {
 	defer {
 		s.close()
 	}
-	comps := pick(result_of(call(mut s, '{"jsonrpc":"2.0","id":1,"method":"schema.components"}')),
-		'components').as_array()
+	comps := items(pick(result_of(call(mut s, '{"jsonrpc":"2.0","id":1,"method":"schema.components"}')),
+		'components'))
 	assert comps.len == 3
 	assert str_of(at(comps[0], 'name')) == 'Transform'
-	fields := at(comps[0], 'fields').as_array()
+	fields := items(at(comps[0], 'fields'))
 	assert str_of(at(fields[2], 'name')) == 'prev_x'
-	assert at(fields[2], 'readonly').bool() == true
+	assert at(fields[2], 'readonly').as_bool() == true
 	assert str_of(at(fields[0], 'unit')) == 'm'
-	cmds := pick(result_of(call(mut s, '{"jsonrpc":"2.0","id":2,"method":"schema.commands"}')),
-		'commands').as_array()
+	cmds := items(pick(result_of(call(mut s, '{"jsonrpc":"2.0","id":2,"method":"schema.commands"}')),
+		'commands'))
 	assert cmds.len >= 13
 }
 
@@ -343,7 +357,7 @@ fn test_sim_reset_clears_world() {
 	_ = call(mut s, '{"jsonrpc":"2.0","id":3,"method":"sim.reset"}')
 	assert s.engine.world.alive_count() == 0
 	h := result_of(call(mut s, '{"jsonrpc":"2.0","id":4,"method":"sim.state_hash"}'))
-	assert pick(h, 'tick').u64() == 0
+	assert pick(h, 'tick').f64() == 0
 	assert str_of(pick(h, 'hash')).len == 18
 	assert str_of(pick(h, 'hash')).starts_with('0x')
 }
@@ -359,7 +373,7 @@ fn test_f32_overflow_is_emitted_as_string_not_inf() {
 	// Hareket x'i tasirir; cikti gecerli JSON kalmali ve inf metin olmali.
 	g := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":3,"method":"entity.get","params":{"entity":0}}'))
-	tr := pick(pick(g, 'components').as_map(), 'Transform').as_map()
+	tr := pick(pick(g, 'components'), 'Transform')
 	assert str_of(pick(tr, 'x')) == 'inf'
 	assert pick(tr, 'y').f64() == 0
 }
@@ -377,7 +391,7 @@ fn test_f32_input_out_of_range_is_rejected_unchanged() {
 		'{"jsonrpc":"2.0","id":3,"method":"component.set","params":{"entity":0,"component":"Transform","field":"x","value":-1e39}}')) == -32602
 	g := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":4,"method":"entity.get","params":{"entity":0}}'))
-	assert pick(pick(pick(g, 'components').as_map(), 'Transform').as_map(), 'x').f64() == 2
+	assert pick(pick(pick(g, 'components'), 'Transform'), 'x').f64() == 2
 }
 
 // Sprite.r [0, 1] dışındayken set reddedilir, değer değişmez; içindeyken kabul edilir.
@@ -392,11 +406,11 @@ fn test_range_violation_on_set_is_rejected_unchanged() {
 		'{"jsonrpc":"2.0","id":2,"method":"component.set","params":{"entity":0,"component":"Sprite","field":"r","value":1.5}}')
 	assert error_code(bad) == -32602
 	assert str_of(at(at(at(bad, 'error'), 'data'), 'hint')) == 'value must be in [0, 1]'
-	assert 'result' in call(mut s,
-		'{"jsonrpc":"2.0","id":3,"method":"component.set","params":{"entity":0,"component":"Sprite","field":"r","value":0.5}}').as_map()
+	assert has(call(mut s,
+		'{"jsonrpc":"2.0","id":3,"method":"component.set","params":{"entity":0,"component":"Sprite","field":"r","value":0.5}}'), 'result')
 	g := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":4,"method":"entity.get","params":{"entity":0}}'))
-	assert pick(pick(pick(g, 'components').as_map(), 'Sprite').as_map(), 'r').f64() == 0.5
+	assert pick(pick(pick(g, 'components'), 'Sprite'), 'r').f64() == 0.5
 }
 
 // Spawn'da aralık dışı değer hata döner ve hiçbir varlık oluşmaz.
@@ -418,16 +432,16 @@ fn test_jsonrpc_member_must_be_2_0() {
 	// Surum uyesi yok: istek calismaz, id yansitilir.
 	r := call(mut s, '{"id":1,"method":"sim.step","params":{"n":1}}')
 	assert error_code(r) == -32600
-	assert at(r, 'id').u64() == 1
+	assert at(r, 'id').f64() == 1
 	// Surum "1.0": yine calismaz.
 	r2 := call(mut s, '{"jsonrpc":"1.0","id":2,"method":"sim.step","params":{"n":1}}')
 	assert error_code(r2) == -32600
-	assert at(r2, 'id').u64() == 2
+	assert at(r2, 'id').f64() == 2
 	// Bildirim (id yok) ve yanlis surum: yanit yok, yurutulmez.
 	assert s.handle('{"method":"sim.step","params":{"n":1}}') == none
 	assert s.handle('{"jsonrpc":"1.0","method":"sim.step","params":{"n":1}}') == none
 	h := result_of(call(mut s, '{"jsonrpc":"2.0","id":5,"method":"sim.state_hash"}'))
-	assert pick(h, 'tick').u64() == 0
+	assert pick(h, 'tick').f64() == 0
 }
 
 // Kayıt dosyasını doğrudan yazar; girdiler sunucu üzerinden üretilemeyen bozuk kayıtlar için kullanılır.
@@ -460,7 +474,7 @@ fn test_record_stop_io_failure_keeps_recording() {
 	}
 	stop := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":4,"method":"record.stop","params":{"path":"${path}"}}'))
-	assert pick(stop, 'commands').int() >= 1
+	assert pick(stop, 'commands').f64() >= 1
 }
 
 fn test_replay_divergence_maps_to_1011() {
@@ -501,5 +515,33 @@ fn test_deep_nesting_is_rejected_without_crash() {
 	assert error_code(call(mut s, deep)) == -32700
 	// 10 derinlik sınırın altındadır ve çalışmaya devam eder.
 	ok := '{"jsonrpc":"2.0","id":1,"method":"sim.state_hash","params":{"x":' + '['.repeat(10) + ']'.repeat(10) + '}}'
-	assert 'result' in call(mut s, ok).as_map()
+	assert has(call(mut s, ok), 'result')
+}
+
+// Büyük tamsayılar (ör. 2^32) tamsayı olarak yazılmalı; "4.294967296e+09" biçimi kabul edilmez.
+fn test_large_integer_ids_print_as_integers() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	out := s.handle('{"jsonrpc":"2.0","id":1,"method":"entity.get","params":{"entity":4294967296}}') or {
+		panic('yanıt yok')
+	}
+	assert out.contains('"entity":4294967296'), out
+	assert !out.contains('e+'), out
+}
+
+// Arena dolduğunda yanıt, arenaya ihtiyaç duymayan sabit -32600 satırıdır.
+fn test_arena_exhaustion_returns_static_error() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	mut small := []u8{len: 64}
+	arena_set(&u8(small.data), 64)
+	out := s.handle('{"jsonrpc":"2.0","id":1,"method":"sim.state_hash"}') or { panic('yanıt yok') }
+	assert out.contains('request or response too large'), out
+	assert out.contains('"code":-32600'), out
+	arena_set(s.req_region, request_arena_bytes)
+	assert has(call(mut s, '{"jsonrpc":"2.0","id":2,"method":"sim.state_hash"}'), 'result')
 }

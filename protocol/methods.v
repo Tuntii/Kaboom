@@ -1,7 +1,6 @@
 module protocol
 
 import math
-import x.json2
 import ecs
 import cmd
 import memory
@@ -108,14 +107,23 @@ const command_docs = [
 	},
 ]
 
-fn (mut s Server) entity_spawn(p map[string]json2.Any) !json2.Any {
+fn (mut s Server) entity_spawn(p Val) !Val {
 	comps := object_param(p, 'components')!
 	mut plans := []Plan{}
-	for name, v in comps {
-		if v !is map[string]json2.Any {
-			return invalid_params('components.${name} must be an object of field values')
+	defer {
+		free_plans(plans)
+	}
+	mut c := comps.first()
+	for !c.is_nil() {
+		name := c.key()
+		// Yinelenen anahtarda yalnız son değer geçerlidir (eski nesne eşlemesi gibi).
+		if comps.is_last(c) {
+			if !c.is_object() {
+				return invalid_params('components.${name} must be an object of field values')
+			}
+			plans << s.plan_component(name, c)!
 		}
-		plans << s.plan_component(name, v as map[string]json2.Any)!
+		c = c.next()
 	}
 	// Spawn bir komut, her bileşen bir add, her alan bir set: hepsi kuyrukta sığmalı.
 	mut need := u64(1)
@@ -123,9 +131,7 @@ fn (mut s Server) entity_spawn(p map[string]json2.Any) !json2.Any {
 		need += u64(1 + pl.writes.len)
 	}
 	if need > u64(s.cfg.queue_capacity) {
-		return rpc_error(code_queue_full, 'command queue is full', {
-			'hint': json2.Any('spawn needs ${need} queue slots but queue_capacity is ${s.cfg.queue_capacity}; spawn fewer components or start the server with a larger queue_capacity')
-		})
+		return rpc_error(code_queue_full, 'command queue is full', hint_data('spawn needs ${need} queue slots but queue_capacity is ${s.cfg.queue_capacity}; spawn fewer components or start the server with a larger queue_capacity'))
 	}
 	s.commit([cmd.Command{
 		kind:   .spawn
@@ -133,6 +139,9 @@ fn (mut s Server) entity_spawn(p map[string]json2.Any) !json2.Any {
 	}])!
 	e := s.engine.queue.result(0).entity
 	mut cmds := []cmd.Command{}
+	defer {
+		unsafe { cmds.free() }
+	}
 	for pl in plans {
 		cmds << cmd.Command{
 			kind:   .add_component
@@ -154,26 +163,27 @@ fn (mut s Server) entity_spawn(p map[string]json2.Any) !json2.Any {
 	if cmds.len > 0 {
 		s.commit(cmds)!
 	}
-	return json2.Any({
-		'entity': json2.Any(u64(e))
-	})
+	return kv('entity', num(f64(u64(e))))
 }
 
-fn (mut s Server) entity_despawn(p map[string]json2.Any) !json2.Any {
+fn (mut s Server) entity_despawn(p Val) !Val {
 	e := entity_param(p)!
-	s.commit([cmd.Command{
+	s.commit_one(cmd.Command{
 		kind:   .despawn
 		source: .agent
 		entity: e
-	}])!
+	})!
 	return empty_object()
 }
 
-fn (mut s Server) component_add(p map[string]json2.Any) !json2.Any {
+fn (mut s Server) component_add(p Val) !Val {
 	e := entity_param(p)!
 	name := string_param(p, 'component')!
 	values := object_param(p, 'values')!
 	plan := s.plan_component(name, values)!
+	defer {
+		unsafe { plan.writes.free() }
+	}
 	// Mevcut bileşeni ya da olmayan varlığı, sets'in yanlis satıra dokunmasını olmadan reddet.
 	if !s.engine.world.is_alive(e) {
 		return s.cmd_error(.dead_entity, cmd.Command{
@@ -197,6 +207,9 @@ fn (mut s Server) component_add(p map[string]json2.Any) !json2.Any {
 			comp:   plan.comp
 		},
 	]
+	defer {
+		unsafe { cmds.free() }
+	}
 	for w in plan.writes {
 		cmds << cmd.Command{
 			kind:   .set_field
@@ -211,102 +224,102 @@ fn (mut s Server) component_add(p map[string]json2.Any) !json2.Any {
 	return empty_object()
 }
 
-fn (mut s Server) component_remove(p map[string]json2.Any) !json2.Any {
+fn (mut s Server) component_remove(p Val) !Val {
 	e := entity_param(p)!
 	name := string_param(p, 'component')!
 	comp := s.component_id(name)!
-	s.commit([
-		cmd.Command{
-			kind:   .remove_component
-			source: .agent
-			entity: e
-			comp:   comp
-		},
-	])!
+	s.commit_one(cmd.Command{
+		kind:   .remove_component
+		source: .agent
+		entity: e
+		comp:   comp
+	})!
 	return empty_object()
 }
 
-fn (mut s Server) component_set(p map[string]json2.Any) !json2.Any {
+fn (mut s Server) component_set(p Val) !Val {
 	e := entity_param(p)!
 	name := string_param(p, 'component')!
 	fname := string_param(p, 'field')!
-	v := p['value'] or { return invalid_params('value is required: a number') }
-	plan := s.plan_component(name, {
-		fname: v
+	v := p.get('value') or { return invalid_params('value is required: a number') }
+	comp := s.component_id(name)!
+	schema := s.reg.component(comp) or {
+		return status_error(.unknown_component, kv('component', str_val(name)))
+	}
+	w := s.field_write(name, schema, fname, v)!
+	s.commit_one(cmd.Command{
+		kind:   .set_field
+		source: .agent
+		entity: e
+		comp:   comp
+		field:  w.field
+		value:  w.bits
 	})!
-	w := plan.writes[0]
-	s.commit([
-		cmd.Command{
-			kind:   .set_field
-			source: .agent
-			entity: e
-			comp:   plan.comp
-			field:  w.field
-			value:  w.bits
-		},
-	])!
 	return empty_object()
 }
 
-fn (s &Server) entity_get(p map[string]json2.Any) !json2.Any {
+fn (s &Server) entity_get(p Val) !Val {
 	e := entity_param(p)!
 	w := &s.engine.world
 	if !w.is_alive(e) {
-		return status_error(.dead_entity, {
-			'entity': json2.Any(u64(e))
-		})
+		return status_error(.dead_entity, kv('entity', num(f64(u64(e)))))
 	}
-	mut comps := map[string]json2.Any{}
+	comps := obj()
 	for id in u16(0) .. s.reg.count() {
 		if !w.has(e, id) {
 			continue
 		}
 		schema := s.reg.component(id) or { continue }
-		mut fields := map[string]json2.Any{}
+		fields := obj()
 		for fi, f in schema.fields {
 			// shortcut: yalnız f32 alanlar JSON'a çevrilir; i32/bool/entity M6'da
 			if f.typ != .f32_ {
 				continue
 			}
 			bits := w.get_field(e, id, u16(fi)) or { continue }
-			fields[f.name] = f32_json(bits)
+			fields.set(f.name, f32_json(bits))
 		}
-		comps[schema.name] = json2.Any(fields)
+		comps.set(schema.name, fields)
 	}
-	return json2.Any({
-		'entity':     json2.Any(u64(e))
-		'index':      json2.Any(int(e.index()))
-		'generation': json2.Any(int(e.generation()))
-		'components': json2.Any(comps)
-	})
+	out := obj()
+	out.set('entity', num(f64(u64(e))))
+	out.set('index', num(f64(e.index())))
+	out.set('generation', num(f64(e.generation())))
+	out.set('components', comps)
+	return out
 }
 
-fn (s &Server) query_entities(p map[string]json2.Any) !json2.Any {
-	wv := p['with'] or { return invalid_params('with is required: an array of component names') }
-	if wv !is []json2.Any {
+fn (s &Server) query_entities(p Val) !Val {
+	wv := p.get('with') or { return invalid_params('with is required: an array of component names') }
+	if !wv.is_array() {
 		return invalid_params('with must be an array of component names')
 	}
-	names := wv as []json2.Any
 	mut ids := []u16{}
-	for n in names {
-		if n !is string {
+	defer {
+		unsafe { ids.free() }
+	}
+	mut nc := wv.first()
+	for !nc.is_nil() {
+		if !nc.is_string() {
 			return invalid_params('with must be an array of component names')
 		}
-		ids << s.component_id(n as string)!
+		ids << s.component_id(nc.str())!
+		nc = nc.next()
 	}
 	mut limit := max_int
-	if 'limit' in p {
+	if _ := p.get('limit') {
 		limit = int_param(p, 'limit', 0, max_int)!
 	}
 	w := &s.engine.world
 	alloc := w.entities()
-	mut out := []json2.Any{}
+	out := arr()
+	mut out_n := 0
 	mut total := 0
 	for i in 0 .. alloc.high_water() {
 		e := alloc.handle_at(i) or { continue }
 		mut all := true
-		for c in ids {
-			if !w.has(e, c) {
+		for cid in ids {
+			if !w.has(e, cid) {
 				all = false
 				break
 			}
@@ -315,69 +328,68 @@ fn (s &Server) query_entities(p map[string]json2.Any) !json2.Any {
 			continue
 		}
 		total++
-		if out.len < limit {
-			out << json2.Any(u64(e))
+		if out_n < limit {
+			out.push(num(f64(u64(e))))
+			out_n++
 		}
 	}
-	return json2.Any({
-		'entities': json2.Any(out)
-		'count':    json2.Any(total)
-	})
+	res := obj()
+	res.set('entities', out)
+	res.set('count', num(f64(total)))
+	return res
 }
 
-fn (s &Server) schema_components() !json2.Any {
-	mut list := []json2.Any{}
+fn (s &Server) schema_components() !Val {
+	list := arr()
 	for id in u16(0) .. s.reg.count() {
 		c := s.reg.component(id) or { continue }
-		mut fields := []json2.Any{}
+		fields := arr()
 		for f in c.fields {
-			fields << json2.Any({
-				'name':     json2.Any(f.name)
-				'type':     json2.Any(f.typ.name())
-				'unit':     json2.Any(f.unit)
-				'min':      json2.Any(f.min)
-				'max':      json2.Any(f.max)
-				'desc':     json2.Any(f.desc)
-				'readonly': json2.Any(f.readonly)
-			})
+			fo := obj()
+			fo.set('name', str_val(f.name))
+			fo.set('type', str_val(f.typ.name()))
+			fo.set('unit', str_val(f.unit))
+			fo.set('min', num(f.min))
+			fo.set('max', num(f.max))
+			fo.set('desc', str_val(f.desc))
+			fo.set('readonly', bool_val(f.readonly))
+			fields.push(fo)
 		}
-		list << json2.Any({
-			'id':     json2.Any(int(c.id))
-			'name':   json2.Any(c.name)
-			'fields': json2.Any(fields)
-		})
+		co := obj()
+		co.set('id', num(f64(int(c.id))))
+		co.set('name', str_val(c.name))
+		co.set('fields', fields)
+		list.push(co)
 	}
-	return json2.Any({
-		'components': json2.Any(list)
-	})
+	res := obj()
+	res.set('components', list)
+	return res
 }
 
-fn schema_commands() json2.Any {
-	mut list := []json2.Any{}
+fn schema_commands() Val {
+	list := arr()
 	for d in command_docs {
-		list << json2.Any({
-			'method': json2.Any(d.method)
-			'params': json2.Any(d.params)
-			'result': json2.Any(d.result)
-		})
+		o := obj()
+		o.set('method', str_val(d.method))
+		o.set('params', str_val(d.params))
+		o.set('result', str_val(d.result))
+		list.push(o)
 	}
-	return json2.Any({
-		'commands': json2.Any(list)
-	})
+	res := obj()
+	res.set('commands', list)
+	return res
 }
 
-fn (mut s Server) sim_step(p map[string]json2.Any) !json2.Any {
+fn (mut s Server) sim_step(p Val) !Val {
 	n := int_param(p, 'n', 1, 1_000_000)!
 	for _ in 0 .. n {
 		s.engine.step()
 	}
-	return json2.Any({
-		'tick': json2.Any(u64(s.engine.tick()))
-	})
+	return kv('tick', num(f64(u64(s.engine.tick()))))
 }
 
 // Bölgeyi serbest birakip tazesini ayırır. Yeniden ayırma başarısızsa sunucu kapalı kalır.
-fn (mut s Server) sim_reset() !json2.Any {
+fn (mut s Server) sim_reset() !Val {
 	_ = memory.release(s.region)
 	s.region = unsafe { nil }
 	need := s.cfg.bytes_needed(&s.reg)
@@ -394,14 +406,14 @@ fn (mut s Server) sim_reset() !json2.Any {
 	return empty_object()
 }
 
-fn (s &Server) sim_state_hash() json2.Any {
-	return json2.Any({
-		'tick': json2.Any(u64(s.engine.tick()))
-		'hash': json2.Any(hash_hex(s.engine.state_hash()))
-	})
+fn (s &Server) sim_state_hash() Val {
+	res := obj()
+	res.set('tick', num(f64(u64(s.engine.tick()))))
+	res.set('hash', hash_val(s.engine.state_hash()))
+	return res
 }
 
-fn (mut s Server) record_start() !json2.Any {
+fn (mut s Server) record_start() !Val {
 	if s.engine.recorder.is_active() {
 		return record_error('a recording is already active; call record.stop first')
 	}
@@ -412,7 +424,7 @@ fn (mut s Server) record_start() !json2.Any {
 	return empty_object()
 }
 
-fn (mut s Server) record_stop(p map[string]json2.Any) !json2.Any {
+fn (mut s Server) record_stop(p Val) !Val {
 	path := string_param(p, 'path')!
 	if !s.engine.recorder.is_active() {
 		return record_error('no recording is active; call record.start first')
@@ -421,108 +433,102 @@ fn (mut s Server) record_stop(p map[string]json2.Any) !json2.Any {
 	// Taşmış kayıt yazılmaz; kayıt yine de durdurulur ki bir sonraki record.start çalışabilsin.
 	if s.engine.recorder.overflowed() {
 		s.engine.recorder.stop()
-		return rpc_error(code_io_error, 'io error', {
-			'path': json2.Any(path)
-			'hint': json2.Any('recording buffer overflowed; restart with a larger record capacity')
-		})
+		return io_error(path, 'recording buffer overflowed; restart with a larger record capacity')
 	}
 	// Kayıt, yazma başarılı olmadan durdurulmaz: I/O hatasında kayıt aktif kalır ve tekrar denenebilir.
 	s.engine.recorder.save(path, s.cfg.capacity, tick) or {
-		return rpc_error(code_io_error, 'io error', {
-			'path': json2.Any(path)
-			'hint': json2.Any('could not write file; retry record.stop with another path')
-		})
+		return io_error(path, 'could not write file; retry record.stop with another path')
 	}
 	s.engine.recorder.stop()
-	return json2.Any({
-		'path':     json2.Any(path)
-		'commands': json2.Any(int(s.engine.recorder.len()))
-		'end_tick': json2.Any(u64(tick))
-		'hash':     json2.Any(hash_hex(s.engine.state_hash()))
-	})
+	res := obj()
+	res.set('path', str_val(path))
+	res.set('commands', num(f64(s.engine.recorder.len())))
+	res.set('end_tick', num(f64(u64(tick))))
+	res.set('hash', hash_val(s.engine.state_hash()))
+	return res
 }
 
-fn (s &Server) replay_run(p map[string]json2.Any) !json2.Any {
+fn (s &Server) replay_run(p Val) !Val {
 	path := string_param(p, 'path')!
 	rec := cmd.load_recording(path) or {
-		return rpc_error(code_io_error, 'io error', {
-			'path': json2.Any(path)
-			'hint': json2.Any('recording could not be read or is malformed; record it again with record.start and record.stop')
-		})
+		return io_error(path, 'recording could not be read or is malformed; record it again with record.start and record.stop')
 	}
 	if rec.capacity > s.cfg.capacity {
-		return rpc_error(code_io_error, 'io error', {
-			'path': json2.Any(path)
-			'hint': json2.Any('recording needs capacity ${rec.capacity}; start vcore with --capacity >= ${rec.capacity}')
-		})
+		return io_error(path, 'recording needs capacity ${rec.capacity}; start vcore with --capacity >= ${rec.capacity}')
 	}
 	res := sim.replay(rec, &s.reg) or {
 		msg := err.msg()
 		// Yalnızca "replay diverged: " önekli hatalar kaydın ayrıştığını gösterir; diğerleri sunucu içi hatadır.
 		if msg.starts_with('replay diverged: ') {
-			return rpc_error(code_replay_diverged, 'replay diverged', {
-				'path': json2.Any(path)
-				'hint': json2.Any(msg)
-			})
+			d := obj()
+			d.set('path', str_val(path))
+			d.set('hint', str_val(msg))
+			return rpc_error(code_replay_diverged, 'replay diverged', d)
 		}
 		return internal_error(msg)
 	}
-	return json2.Any({
-		'end_tick': json2.Any(u64(res.end_tick))
-		'hash':     json2.Any(hash_hex(res.hash))
-	})
+	out := obj()
+	out.set('end_tick', num(f64(u64(res.end_tick))))
+	out.set('hash', hash_val(res.hash))
+	return out
 }
 
 // Bileşen adini kayit id'sine çevirir; yoksa 1002.
 fn (s &Server) component_id(name string) !u16 {
-	return s.reg.find(name) or {
-		return status_error(.unknown_component, {
-			'component': json2.Any(name)
-		})
-	}
+	return s.reg.find(name) or { return status_error(.unknown_component, kv('component', str_val(name))) }
 }
 
-// Değerleri doğrular ve dünyaya dokunmadan bir Plan uretir. Sıra: ad, readonly, tip, değer.
-fn (s &Server) plan_component(name string, values map[string]json2.Any) !Plan {
+// Değerleri doğrular ve dünyaya dokunmadan bir Plan uretir. Sıra: ad, alan adı, readonly, tip, değer.
+// Yinelenen anahtarda yalnız son değer alınır.
+fn (s &Server) plan_component(name string, values Val) !Plan {
 	id := s.component_id(name)!
 	schema := s.reg.component(id) or {
-		return status_error(.unknown_component, {
-			'component': json2.Any(name)
-		})
+		return status_error(.unknown_component, kv('component', str_val(name)))
 	}
 	mut writes := []FieldWrite{}
-	for fname, v in values {
-		fi := schema.field_index(fname) or {
-			return status_error(.unknown_field, {
-				'component': json2.Any(name)
-				'field':     json2.Any(fname)
-			})
-		}
-		f := schema.fields[fi]
-		if f.readonly {
-			return rpc_error(code_readonly_field, 'readonly field', {
-				'component': json2.Any(name)
-				'field':     json2.Any(fname)
-				'hint':      json2.Any('${name}.${fname} is maintained by the system and cannot be set')
-			})
-		}
-		// shortcut: yalnız f32 JSON donusumu; i32/bool/entity M6'da
-		if f.typ != .f32_ {
-			return invalid_params('field ${name}.${fname} has type ${f.typ.name()}, only f32 is supported over JSON')
-		}
-		bits := f32_bits(v) or { return invalid_params('${name}.${fname} must be a finite number') }
-		x := v as f64
-		if x < f.min || x > f.max {
-			return invalid_params('value must be in [${range_text(f.min)}, ${range_text(f.max)}]')
-		}
-		writes << FieldWrite{
-			field: u16(fi)
-			bits:  bits
+	mut ok := false
+	defer {
+		if !ok {
+			unsafe { writes.free() }
 		}
 	}
+	mut c := values.first()
+	for !c.is_nil() {
+		if values.is_last(c) {
+			writes << s.field_write(name, schema, c.key(), c)!
+		}
+		c = c.next()
+	}
+	ok = true
 	return Plan{
 		comp:   id
 		writes: writes
+	}
+}
+
+// Tek bir alan yazımını doğrular: alan adı, readonly, tip, aralık.
+fn (s &Server) field_write(name string, schema ecs.ComponentSchema, fname string, v Val) !FieldWrite {
+	fi := schema.field_index(fname) or {
+		return status_error(.unknown_field, component_field_ref(name, fname))
+	}
+	f := schema.fields[fi]
+	if f.readonly {
+		d := component_field_ref(name, fname)
+		d.set('hint', str_val('${name}.${fname} is maintained by the system and cannot be set'))
+		return rpc_error(code_readonly_field, 'readonly field', d)
+	}
+	// shortcut: yalnız f32 JSON donusumu; i32/bool/entity M6'da
+	if f.typ != .f32_ {
+		return invalid_params('field ${name}.${fname} has type ${f.typ.name()}, only f32 is supported over JSON')
+	}
+	bits := f32_bits(v) or { return invalid_params('${name}.${fname} must be a finite number') }
+	x := v.f64()
+	if x < f.min || x > f.max {
+		return invalid_params('value must be in [${range_text(f.min)}, ${range_text(f.max)}]')
+	}
+	return FieldWrite{
+		field: u16(fi)
+		bits:  bits
 	}
 }
 
@@ -530,15 +536,11 @@ fn (s &Server) plan_component(name string, values map[string]json2.Any) !Plan {
 // Kapasite komutlardan önce denetlenir: yarım kalmış bir kuyruk sonraki isteğe sızmaz.
 fn (mut s Server) commit(cmds []cmd.Command) ! {
 	if cmds.len > int(s.cfg.queue_capacity) {
-		return rpc_error(code_queue_full, 'command queue is full', {
-			'hint': json2.Any('request needs ${cmds.len} queue slots but queue_capacity is ${s.cfg.queue_capacity}')
-		})
+		return rpc_error(code_queue_full, 'command queue is full', hint_data('request needs ${cmds.len} queue slots but queue_capacity is ${s.cfg.queue_capacity}'))
 	}
 	for c in cmds {
 		if !s.engine.push(c) {
-			return rpc_error(code_queue_full, 'command queue is full', {
-				'hint': json2.Any('command queue rejected a command; retry the request')
-			})
+			return rpc_error(code_queue_full, 'command queue is full', hint_data('command queue rejected a command; retry the request'))
 		}
 	}
 	_ = s.engine.flush()
@@ -550,50 +552,62 @@ fn (mut s Server) commit(cmds []cmd.Command) ! {
 	}
 }
 
+// commit'in tek komutluk hali: dizi tahsisi yapmaz, denetimler commit ile aynıdır.
+fn (mut s Server) commit_one(c cmd.Command) ! {
+	if 1 > int(s.cfg.queue_capacity) {
+		return rpc_error(code_queue_full, 'command queue is full', hint_data('request needs 1 queue slots but queue_capacity is ${s.cfg.queue_capacity}'))
+	}
+	if !s.engine.push(c) {
+		return rpc_error(code_queue_full, 'command queue is full', hint_data('command queue rejected a command; retry the request'))
+	}
+	_ = s.engine.flush()
+	r := s.engine.queue.result(0)
+	if r.status != .ok {
+		return s.cmd_error(r.status, c)
+	}
+}
+
 // Komut hatasını entity, component ve field bağlamıyla kodlar.
 fn (s &Server) cmd_error(st ecs.Status, c cmd.Command) RpcError {
-	mut refs := map[string]json2.Any{}
+	refs := obj()
 	if c.kind != .spawn {
-		refs['entity'] = json2.Any(u64(c.entity))
+		refs.set('entity', num(f64(u64(c.entity))))
 	}
 	if c.kind in [.add_component, .remove_component, .set_field] {
 		if schema := s.reg.component(c.comp) {
-			refs['component'] = json2.Any(schema.name)
+			refs.set('component', str_val(schema.name))
 			if c.kind == .set_field && int(c.field) < schema.fields.len {
-				refs['field'] = json2.Any(schema.fields[c.field].name)
+				refs.set('field', str_val(schema.fields[c.field].name))
 			}
 		}
 	}
 	return status_error(st, refs)
 }
 
-// Nesne tipindeki parametre; yoksa boş nesne. Tip yanlışsa -32602.
-fn object_param(p map[string]json2.Any, key string) !map[string]json2.Any {
-	if key !in p {
-		return map[string]json2.Any{}
-	}
-	v := p[key] or { null_value() }
-	if v !is map[string]json2.Any {
+// Nesne tipindeki parametre; yoksa nil (boş nesne gibi okunur). Tip yanlışsa -32602.
+fn object_param(p Val, key string) !Val {
+	v := p.get(key) or { return Val{} }
+	if !v.is_object() {
 		return invalid_params('${key} must be an object')
 	}
-	return v as map[string]json2.Any
+	return v
 }
 
-fn string_param(p map[string]json2.Any, key string) !string {
-	v := p[key] or { return invalid_params('${key} is required') }
-	if v !is string {
+fn string_param(p Val, key string) !string {
+	v := p.get(key) or { return invalid_params('${key} is required') }
+	if !v.is_string() {
 		return invalid_params('${key} must be a string')
 	}
-	return v as string
+	return v.str()
 }
 
 // Entity id: JSON tamsayısı, 0 <= x < 2^48.
-fn entity_param(p map[string]json2.Any) !ecs.EntityID {
-	v := p['entity'] or { return invalid_params('entity is required: a non-negative integer id') }
-	if v !is f64 {
+fn entity_param(p Val) !ecs.EntityID {
+	v := p.get('entity') or { return invalid_params('entity is required: a non-negative integer id') }
+	if !v.is_number() {
 		return invalid_params('entity must be a non-negative integer id')
 	}
-	x := v as f64
+	x := v.f64()
 	if x < 0 || x >= entity_id_limit || x != math.floor(x) {
 		return invalid_params('entity must be a non-negative integer id below 2^48')
 	}
@@ -601,12 +615,12 @@ fn entity_param(p map[string]json2.Any) !ecs.EntityID {
 }
 
 // Tamsayı parametresi; [lo, hi] aralığında olmali.
-fn int_param(p map[string]json2.Any, key string, lo int, hi int) !int {
-	v := p[key] or { return invalid_params('${key} is required') }
-	if v !is f64 {
+fn int_param(p Val, key string, lo int, hi int) !int {
+	v := p.get(key) or { return invalid_params('${key} is required') }
+	if !v.is_number() {
 		return invalid_params('${key} must be an integer')
 	}
-	x := v as f64
+	x := v.f64()
 	if x != math.floor(x) || x < f64(lo) || x > f64(hi) {
 		return invalid_params('${key} must be an integer from ${lo} to ${hi}')
 	}
@@ -614,11 +628,11 @@ fn int_param(p map[string]json2.Any, key string, lo int, hi int) !int {
 }
 
 // JSON sayısı f32 aralığındaysa ve sonluysa bit desenini döner.
-fn f32_bits(v json2.Any) ?u64 {
-	if v !is f64 {
+fn f32_bits(v Val) ?u64 {
+	if !v.is_number() {
 		return none
 	}
-	x := v as f64
+	x := v.f64()
 	if x > max_f32 || x < -max_f32 {
 		return none
 	}
@@ -627,18 +641,18 @@ fn f32_bits(v json2.Any) ?u64 {
 
 // f32 bit deseni JSON degeri: sonlu sayi sayi olarak, sonsuz ve NaN metin olarak ("inf", "-inf", "nan").
 // JSON'da inf/NaN yoktur; alan tasmasi (ornegin hareket sonrasi) bu yoldan cikar.
-fn f32_json(bits u64) json2.Any {
+fn f32_json(bits u64) Val {
 	x := f64(math.f32_from_bits(u32(bits)))
 	if x != x {
-		return json2.Any('nan')
+		return str_val('nan')
 	}
 	if x > max_f32 {
-		return json2.Any('inf')
+		return str_val('inf')
 	}
 	if x < -max_f32 {
-		return json2.Any('-inf')
+		return str_val('-inf')
 	}
-	return json2.Any(x)
+	return num(x)
 }
 
 // Tam sayı sınırları "0" biçiminde, ondalıklılar olduğu gibi yazılır.
@@ -649,16 +663,53 @@ fn range_text(x f64) string {
 	return '${x}'
 }
 
-fn hash_hex(h u64) string {
-	return '0x${h:016x}'
+// "0x" + 16 hex: tampon yığında kurulur ve arenaya kopyalanır (string interpolation tahsis eder).
+fn hash_val(h u64) Val {
+	mut buf := [19]u8{}
+	digits := '0123456789abcdef'
+	buf[0] = `0`
+	buf[1] = `x`
+	for i in 0 .. 16 {
+		buf[2 + i] = digits[int((h >> u64(60 - 4 * i)) & 0xf)]
+	}
+	// buf[18] NUL kalır: cJSON_CreateString uzunluğu strlen ile bulur.
+	return str_val(unsafe { tos(&u8(&buf[0]), 18) })
 }
 
-fn empty_object() json2.Any {
-	return json2.Any(map[string]json2.Any{})
+fn empty_object() Val {
+	return obj()
+}
+
+// Tek anahtarlı nesne; hata bağlamı (entity, component ...) için.
+fn kv(key string, x Val) Val {
+	o := obj()
+	o.set(key, x)
+	return o
+}
+
+fn component_field_ref(name string, fname string) Val {
+	o := obj()
+	o.set('component', str_val(name))
+	o.set('field', str_val(fname))
+	return o
 }
 
 fn record_error(hint string) RpcError {
-	return rpc_error(code_record_state, 'record state', {
-		'hint': json2.Any(hint)
-	})
+	return rpc_error(code_record_state, 'record state', hint_data(hint))
+}
+
+// Dosya hatası: path ve bir hint.
+fn io_error(path string, hint string) RpcError {
+	d := obj()
+	d.set('path', str_val(path))
+	d.set('hint', str_val(hint))
+	return rpc_error(code_io_error, 'io error', d)
+}
+
+// Ayrılmış planların dizilerini serbest bırakır (istek sonunda çağrılır).
+fn free_plans(plans []Plan) {
+	for pl in plans {
+		unsafe { pl.writes.free() }
+	}
+	unsafe { plans.free() }
 }
