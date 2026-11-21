@@ -186,3 +186,25 @@ fn test_write_png_creates_file() {
 	}
 	assert pixels == [u8(1), 2, 3, 4]
 }
+
+fn test_encode_rejects_overflowing_width() {
+	// 2^30 * 1 * 4 bayt 32-bit int'te taşar; boş tampon yine hata vermeli.
+	mut failed := false
+	encode_rgba(1073741824, 1, []u8{}, false) or { failed = true }
+	assert failed
+}
+
+fn test_encode_rejects_width_over_limit() {
+	mut failed := false
+	encode_rgba(16385, 1, []u8{len: 16385 * 4}, false) or { failed = true }
+	assert failed
+}
+
+fn test_encode_rejects_rgba_length_off_by_one() {
+	mut short_failed := false
+	encode_rgba(2, 2, []u8{len: 15}, false) or { short_failed = true }
+	assert short_failed
+	mut long_failed := false
+	encode_rgba(2, 2, []u8{len: 17}, false) or { long_failed = true }
+	assert long_failed
+}

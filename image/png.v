@@ -35,16 +35,20 @@ pub fn adler32(data []u8) u32 {
 // Stored blok başına en çok bayt (deflate LEN alanı u16).
 const max_stored_block = 65535
 
+// En büyük kenar; GL maksimum doku boyutu sınıfı.
+const max_side = 16384
+
 // encode_rgba bir RGBA8 tamponunu PNG baytlarına çevirir. flip_y, GL alt-sol orijinli okumalar içindir:
 // satırlar alttan üste yazılır.
 pub fn encode_rgba(width int, height int, rgba []u8, flip_y bool) ![]u8 {
-	if width <= 0 || height <= 0 {
+	// Boyut sınırı: GL üst sınırı; i64 çarpımı 32-bit int taşmasını önler.
+	if width <= 0 || height <= 0 || width > max_side || height > max_side {
 		return error('png: geçersiz boyut ${width}x${height}')
 	}
-	row := width * 4
-	if rgba.len != row * height {
-		return error('png: rgba uzunluğu ${rgba.len}, beklenen ${row * height}')
+	if i64(rgba.len) != i64(width) * i64(height) * 4 {
+		return error('png: rgba uzunluğu ${rgba.len}, beklenen ${i64(width) * i64(height) * 4}')
 	}
+	row := width * 4
 	// Ham veri: her satır için 1 filtre baytı (0) ve satır pikselleri.
 	mut raw := []u8{cap: (row + 1) * height}
 	for r in 0 .. height {
