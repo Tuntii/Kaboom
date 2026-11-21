@@ -62,3 +62,20 @@ fn test_hash_sensitive_and_stable() {
 	assert a.state_hash() != c.state_hash()
 	assert state_hash(&a.world, 2) != state_hash(&a.world, 3)
 }
+
+// Dolu dünyanın altın vektörü: id 0 varlık, Transform.x=1.0, Transform.y=2.0, Body.vx=3.0 (diğer alanlar 0).
+fn test_hash_golden_vector_non_empty_world() {
+	reg := ecs.core_registry() or { panic(err) }
+	region := memory.reserve(1 << 20) or { panic('reserve basarisiz') }
+	defer { memory.release(region) }
+	mut a := memory.LinearArena.new(region, 1 << 20)
+	mut w := ecs.World.new(mut a, &reg, 8) or { panic('World.new none') }
+	e := w.spawn() or { panic('spawn none') }
+	assert u64(e) == 0
+	assert w.add_component(e, ecs.transform_id) == .ok
+	assert w.add_component(e, ecs.body_id) == .ok
+	assert w.set_field(e, ecs.transform_id, 0, u64(math.f32_bits(f32(1.0)))) == .ok
+	assert w.set_field(e, ecs.transform_id, 1, u64(math.f32_bits(f32(2.0)))) == .ok
+	assert w.set_field(e, ecs.body_id, 0, u64(math.f32_bits(f32(3.0)))) == .ok
+	assert state_hash(&w, 0) == u64(0x776b582d1e09bfd9)
+}
