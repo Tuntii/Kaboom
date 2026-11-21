@@ -44,6 +44,18 @@ pub fn (a &LinearArena) used() u64 {
 	return a.offset
 }
 
+// Geri sarma noktasi: su anki imlec.
+pub fn (a &LinearArena) mark() u64 {
+	return a.offset
+}
+
+// Imleci m'e geri alir. m mevcut imlecten ilerideyse yok sayilir (ileri sarma yok).
+pub fn (mut a LinearArena) rewind(m u64) {
+	if m <= a.offset {
+		a.offset = m
+	}
+}
+
 // Reddedilen (tasmali ya da gecersiz hizalamali) tahsis sayisi.
 pub fn (a &LinearArena) failed_allocs() u64 {
 	return a.failed

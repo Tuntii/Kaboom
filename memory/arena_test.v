@@ -79,3 +79,18 @@ fn test_reset() {
 	p := a.alloc_aligned(1, 1) or { panic('sonrasi alloc none') }
 	assert p == base
 }
+
+fn test_mark_rewind() {
+	base := reserve(4096) or { panic('reserve basarisiz') }
+	defer { release(base) }
+	mut a := LinearArena.new(base, 1024)
+	a.alloc_aligned(100, 1) or { panic('alloc1 none') }
+	m := a.mark()
+	assert m == 100
+	a.alloc_aligned(200, 1) or { panic('alloc2 none') }
+	a.rewind(m)
+	assert a.used() == 100
+	// Ileri sarma yok sayilir.
+	a.rewind(900)
+	assert a.used() == 100
+}

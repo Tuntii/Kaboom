@@ -8,11 +8,17 @@ mut:
 	frame  u64
 }
 
-// Iki yariyi da parent'tan 64 hizali alir. Parent yetmezse none doner.
-// shortcut: ikinci yari alinamazsa birinci yari parent'ta harcanmis kalir, geri alinmaz.
+// Iki yariyi da parent'tan 64 hizali alir. Parent yetmezse none doner ve parent geri sarilir.
 pub fn EpochArena.new(mut parent LinearArena, half_capacity u64) ?EpochArena {
-	a := parent.alloc_aligned(half_capacity, 64) or { return none }
-	b := parent.alloc_aligned(half_capacity, 64) or { return none }
+	m := parent.mark()
+	a := parent.alloc_aligned(half_capacity, 64) or {
+		parent.rewind(m)
+		return none
+	}
+	b := parent.alloc_aligned(half_capacity, 64) or {
+		parent.rewind(m)
+		return none
+	}
 	return EpochArena{
 		arenas: [LinearArena.new(a, half_capacity), LinearArena.new(b, half_capacity)]!
 	}

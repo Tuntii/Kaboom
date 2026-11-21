@@ -108,3 +108,17 @@ fn test_new_parent_too_small_is_none() {
 		assert false
 	}
 }
+
+// Slot blogu sigar, bitmap sigmaz: parent geri sarilmali.
+fn test_new_rolls_back_on_bitmap_failure() {
+	base := reserve(65536) or { panic('reserve basarisiz') }
+	defer { release(base) }
+	mut a := LinearArena.new(base, 4240)
+	// Offset 8: slotlar 64..4224'e sigar, bitmap 4224..4248'e sigmaz.
+	a.alloc_aligned(8, 1) or { panic('prealloc none') }
+	before := a.used()
+	if _ := PoolAllocator.new(mut a, 24, 130) {
+		assert false, 'bitmap sigmiyor, none donmeli'
+	}
+	assert a.used() == before
+}

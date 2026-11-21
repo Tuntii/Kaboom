@@ -46,7 +46,12 @@ pub fn measure(warmup int, iterations int, f fn ()) Stats {
 	return summarize(samples) or { panic('measure: iterations 0 olamaz') }
 }
 
-// Tek bir benchmark sonucu. state_hash M2'ye kadar "".
+// Sonuclar klasoru. Her program kendi koşusunu bu klasore yazar.
+pub fn results_dir() string {
+	return os.join_path(@VMODROOT, 'bench', 'results')
+}
+
+// Tek bir benchmark sonucu. state_hash M2'ye kadar "". seed: veri uretiminin tohumu (yoksa 0).
 pub struct Result {
 pub:
 	name           string
@@ -55,28 +60,30 @@ pub:
 	stats          Stats
 	mem_bytes      u64
 	state_hash     string
+	seed           u64
 }
 
-// Bir kosunun tum sonuclari. date biçimi YYYY-MM-DD-HHMMSS.
+// Bir kosunun tum sonuclari. date biçimi YYYY-MM-DD-HHMMSS. suite: benchmark programi (m1_memory, m2_tick).
 pub struct Report {
 pub:
+	suite     string
 	label     string
 	date      string
 	v_version string
 	results   []Result
 }
 
-// dir yoksa olusturur, <dir>/<date>-<label>.json yazar ve yolu doner.
+// dir yoksa olusturur, <dir>/<date>-<suite>-<label>.json yazar ve yolu doner.
 pub fn write_report(r Report, dir string) !string {
 	os.mkdir_all(dir)!
-	path := os.join_path(dir, '${r.date}-${r.label}.json')
+	path := os.join_path(dir, '${r.date}-${r.suite}-${r.label}.json')
 	os.write_file(path, json.encode(r))!
 	return path
 }
 
-// Dosya adina gore sonuncu raporu doner. exclude_path ile verilen dosya atlanir.
-// Bozuk JSON dosyalari atlanir, klasor yoksa none.
-pub fn latest_report(dir string, exclude_path string) ?Report {
+// Ayni suite'li en yeni raporu doner. exclude_path ile verilen dosya atlanir.
+// Bozuk JSON ve baska suite'e ait raporlar atlanir, klasor yoksa none.
+pub fn latest_report(dir string, suite string, exclude_path string) ?Report {
 	files := os.ls(dir) or { return none }
 	mut names := files.filter(it.ends_with('.json'))
 	names.sort()
@@ -86,7 +93,10 @@ pub fn latest_report(dir string, exclude_path string) ?Report {
 			continue
 		}
 		text := os.read_file(path) or { continue }
-		return json.decode(Report, text) or { continue }
+		r := json.decode(Report, text) or { continue }
+		if r.suite == suite {
+			return r
+		}
 	}
 	return none
 }
@@ -99,7 +109,8 @@ fn pct_change(prev u64, cur u64) f64 {
 	return (f64(cur) - f64(prev)) / f64(prev) * 100.0
 }
 
-// Ayni adli sonuclari karsilastirir. Medyan %10'dan fazla artarsa YAVASLADI, onceki raporda olmayan YENI.
+// Ayni adli sonuclari karsilastirir. Medyan %10'dan fazla artarsa YAVASLADI, onceki raporda olmayan YENI,
+// onceki raporda olup simdikinde olmayan KAYIP.
 pub fn compare(prev Report, cur Report) string {
 	mut sb := strings.new_builder(256)
 	for r in cur.results {
@@ -116,10 +127,19 @@ pub fn compare(prev Report, cur Report) string {
 				sb.write_string(' YAVASLADI')
 			}
 			sb.write_string('\n')
+			// Iki tarafta da hash varsa ve farkliysa determinizm sapmasi: ayri satir.
+			if p.state_hash != '' && r.state_hash != '' && p.state_hash != r.state_hash {
+				sb.write_string('${r.name}: HASH DEGISTI (${p.state_hash} -> ${r.state_hash})\n')
+			}
 			break
 		}
 		if !found {
 			sb.write_string('${r.name}: YENI\n')
+		}
+	}
+	for p in prev.results {
+		if !cur.results.any(it.name == p.name) {
+			sb.write_string('${p.name}: KAYIP\n')
 		}
 	}
 	return sb.str()

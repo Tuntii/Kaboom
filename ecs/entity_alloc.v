@@ -11,21 +11,32 @@ mut:
 	alive_bits  &u64
 	free_head   u32
 	capacity   u32
-	high_water u32
+	// Hic verilmemis ilk indeks; high_water() ile okunur.
+	fresh      u32
 	alive      u32
 	retired    u32
 }
 
-// Dizileri parent'tan alir ve ilk degerlerini kendisi yazar. Tasmada ya da capacity >= null_index ise none.
+// Dizileri parent'tan alir ve ilk degerlerini kendisi yazar. Tasmada ya da capacity >= null_index ise none; parent geri sarilir.
 pub fn EntityAllocator.new(mut parent memory.LinearArena, capacity u32) ?EntityAllocator {
 	if capacity >= null_index {
 		return none
 	}
 	// Boyutlar u64'te hesaplanir: V int 32 bit, capacity 2^31 ustu olabilir.
 	words := (u64(capacity) + 63) / 64
-	gens := parent.alloc_aligned(u64(capacity) * 2, 64) or { return none }
-	next := parent.alloc_aligned(u64(capacity) * 4, 64) or { return none }
-	bits := parent.alloc_aligned(words * 8, 64) or { return none }
+	m := parent.mark()
+	gens := parent.alloc_aligned(u64(capacity) * 2, 64) or {
+		parent.rewind(m)
+		return none
+	}
+	next := parent.alloc_aligned(u64(capacity) * 4, 64) or {
+		parent.rewind(m)
+		return none
+	}
+	bits := parent.alloc_aligned(words * 8, 64) or {
+		parent.rewind(m)
+		return none
+	}
 	generations := unsafe { &u16(gens) }
 	free_next := unsafe { &u32(next) }
 	alive_bits := unsafe { &u64(bits) }
@@ -55,9 +66,9 @@ pub fn (mut a EntityAllocator) create() ?EntityID {
 	if a.free_head != null_index {
 		idx = a.free_head
 		a.free_head = unsafe { a.free_next[idx] }
-	} else if a.high_water < a.capacity {
-		idx = a.high_water
-		a.high_water++
+	} else if a.fresh < a.capacity {
+		idx = a.fresh
+		a.fresh++
 	} else {
 		return none
 	}
@@ -98,7 +109,7 @@ pub fn (a &EntityAllocator) is_alive(e EntityID) bool {
 		return false
 	}
 	idx := e.index()
-	if idx >= a.high_water {
+	if idx >= a.fresh {
 		return false
 	}
 	w := int(idx / 64)
@@ -112,4 +123,22 @@ pub fn (a &EntityAllocator) alive_count() u32 {
 
 pub fn (a &EntityAllocator) retired_count() u32 {
 	return a.retired
+}
+
+// Simdiye kadar verilmis indekslerin siniri (ilk hic verilmemis indeks).
+pub fn (a &EntityAllocator) high_water() u32 {
+	return a.fresh
+}
+
+// idx icin canli handle'i verir. idx high_water disinda ya da slot olu ise none.
+pub fn (a &EntityAllocator) handle_at(idx u32) ?EntityID {
+	if idx >= a.fresh {
+		return none
+	}
+	w := int(idx / 64)
+	bit := u64(1) << u64(idx % 64)
+	if unsafe { a.alive_bits[w] } & bit == 0 {
+		return none
+	}
+	return make_entity(idx, unsafe { a.generations[idx] })
 }
