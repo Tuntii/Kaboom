@@ -1,0 +1,15 @@
+{"jsonrpc":"2.0","id":1,"method":"schema.components"}
+{"jsonrpc":"2.0","id":2,"method":"record.start"}
+{"jsonrpc":"2.0","id":3,"method":"entity.spawn","params":{"components":{"Transform":{"x":0,"y":0},"Body":{"vx":1,"vy":0.5}}}}
+{"jsonrpc":"2.0","id":4,"method":"entity.spawn","params":{"components":{"Transform":{"x":10,"y":10}}}}
+{"jsonrpc":"2.0","id":5,"method":"entity.spawn","params":{"components":{"Transform":{"x":0,"y":0},"Body":{"vx":-2,"vy":0}}}}
+{"jsonrpc":"2.0","id":6,"method":"sim.step","params":{"n":1000}}
+{"jsonrpc":"2.0","id":7,"method":"entity.get","params":{"entity":0}}
+{"jsonrpc":"2.0","id":8,"method":"query.entities","params":{"with":["Body"]}}
+{"jsonrpc":"2.0","id":9,"method":"entity.despawn","params":{"entity":2}}
+{"jsonrpc":"2.0","id":10,"method":"query.entities","params":{"with":["Transform"]}}
+{"jsonrpc":"2.0","id":11,"method":"component.set","params":{"entity":2,"component":"Transform","field":"x","value":1}}
+{"jsonrpc":"2.0","id":12,"method":"sim.state_hash"}
+{"jsonrpc":"2.0","id":13,"method":"record.stop","params":{"path":"m2_agent.vcrec"}}
+{"jsonrpc":"2.0","id":14,"method":"replay.run","params":{"path":"m2_agent.vcrec"}}
+{"jsonrpc":"2.0","id":15,"method":"replay.run","params":{"path":"m2_agent.vcrec"}}
