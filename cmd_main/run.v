@@ -96,6 +96,9 @@ fn capture_frame(path string) !(int, int) {
 	c.rend.draw(render.Camera{}, w, h, n)
 	render.finish()
 	mut px := []u8{len: w * h * 4}
+	defer {
+		unsafe { px.free() }
+	}
 	render.read_pixels(0, 0, w, h, render.gl_rgba, render.gl_unsigned_byte, px.data)
 	image.write_png(path, w, h, px, true)!
 	return w, h

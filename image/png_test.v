@@ -1,6 +1,7 @@
 module image
 
 import os
+import memory
 
 // Yalnızca bu dosyanın ürettiği stored deflate PNG'lerini çözer. Chunk CRC'lerini ve Adler-32'yi doğrular.
 fn decode_stored_png(png []u8) !(int, int, []u8) {
@@ -207,4 +208,12 @@ fn test_encode_rejects_rgba_length_off_by_one() {
 	mut long_failed := false
 	encode_rgba(2, 2, []u8{len: 17}, false) or { long_failed = true }
 	assert long_failed
+}
+
+// Sızıntı ölçümünün (png_leak_test.v) dayandığı sayaç: tahsis yapılmadan canlı sayı değişmemeli.
+// Bu test aynı zamanda memory modülünü bu derlemeye bağlar (-d track_heap kancaları için).
+fn test_heap_live_count_is_stable_without_allocation() {
+	before := memory.heap_live_count()
+	after := memory.heap_live_count()
+	assert before == after
 }
