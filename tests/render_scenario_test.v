@@ -165,3 +165,58 @@ fn test_render_scenario_screenshot() {
 	x := tr['x'] or { panic('x yok') }.f64()
 	assert x > 10.0 - 1e-3 && x < 10.0 + 1e-3, 'x=${x} beklenen 10'
 }
+
+// Çalışan (duraklatılmamış) modda ekran görüntüsü mevcut tick'i gösterir: yeni varlık ne önceki konumda
+// (başlangıç noktası) ne de interpolasyon ara konumunda çizilir. Canlı saat kaç adım koşarsa koşsun
+// varlık Body taşımadığı için x=-100'de kalır.
+fn test_render_live_screenshot_uses_current_tick() {
+	tmp := os.join_path(os.temp_dir(), 'vcore_m3_live_${os.getpid()}')
+	os.mkdir_all(tmp) or { panic(err) }
+	defer {
+		os.rmdir_all(tmp) or {}
+	}
+	exe := os.join_path(tmp, 'vcore.exe')
+	build := os.execute('"${@VEXE}" -gc none -subsystem console -o "${exe}" "${@VMODROOT}/cmd_main"')
+	assert build.exit_code == 0, build.output
+
+	scenario := os.join_path(@VMODROOT, 'tests', 'scenarios', 'm3_live_screenshot.jsonl')
+	old_wd := os.getwd()
+	os.chdir(tmp) or { panic(err) }
+	defer {
+		os.chdir(old_wd) or {}
+	}
+
+	run := os.execute('"${exe}" run --hidden --width 320 --height 180 < "${scenario}"')
+	if run.exit_code == 3 && run.output.contains('GL yok') {
+		eprintln('atlandi: GL yok: ${run.output.trim_space()}')
+		return
+	}
+	assert run.exit_code == 0, run.output
+
+	mut by_id := map[int]map[string]json2.Any{}
+	for line in run.output.split_into_lines() {
+		if line.trim_space() == '' {
+			continue
+		}
+		m := json2.decode[json2.Any](line) or { panic('gecersiz JSON yanit: ${line}') }
+		obj := m.as_map()
+		id := (obj['id'] or { panic('id yok: ${line}') }).int()
+		by_id[id] = obj.clone()
+	}
+	assert by_id.len == 2, 'yanit sayisi 2 olmaliydi: ${run.output}'
+	shot := by_id[2]['result'] or { panic('screenshot sonucu yok: ${run.output}') }.as_map()
+	w := shot['width'] or { panic('width yok') }.int()
+	h := shot['height'] or { panic('height yok') }.int()
+
+	png := os.read_bytes(os.join_path(tmp, 'live.png')) or { panic('live.png okunamadi: ${err}') }
+	pw, _, pixels := render_decode_png(png) or { panic('PNG cozulemedi: ${err}') }
+	assert pw == w, 'PNG genisligi ${pw}, yanit ${w}'
+
+	// Kamera view_h 220, cx = cy = 0: x=-100 merkezi ve x=0 merkezi (başlangıç noktası) piksel konumları.
+	view_w := f32(220) * f32(w) / f32(h)
+	red_x := int((f32(-100) + view_w / 2) / view_w * f32(w))
+	origin_x := int((f32(0) + view_w / 2) / view_w * f32(w))
+	mid_y := h / 2
+	assert_rgb_near(render_pixel(pixels, pw, red_x, mid_y), [u8(255), 0, 0], 'kirmizi x=-100')
+	assert render_pixel(pixels, pw, origin_x, mid_y)[0] < 128, 'kirmizi varlik baslangic noktasinda cizildi'
+}

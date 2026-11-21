@@ -92,7 +92,8 @@ fn capture_frame(path string) !(int, int) {
 		return error('pencere boyutu sifir')
 	}
 	mut out := c.rend.payload()
-	n, _ := render.prepare(c.srv.world(), c.qf, c.alpha, mut out)
+	// Ekran görüntüsü mevcut tick'i gösterir: alfa 1.0 (entity.get ile aynı konum).
+	n, _ := render.prepare(c.srv.world(), c.qf, 1.0, mut out)
 	c.rend.draw(render.Camera{}, w, h, n)
 	render.finish()
 	mut px := []u8{len: w * h * 4}

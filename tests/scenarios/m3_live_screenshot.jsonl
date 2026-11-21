@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":-100,"y":0},"Sprite":{"size":40,"r":1,"g":0,"b":0}}}}
+{"jsonrpc":"2.0","id":2,"method":"capture.screenshot","params":{"path":"live.png"}}
