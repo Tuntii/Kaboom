@@ -269,7 +269,7 @@ fn (s &Server) entity_get(p map[string]json2.Any) !json2.Any {
 				continue
 			}
 			bits := w.get_field(e, id, u16(fi)) or { continue }
-			fields[f.name] = json2.Any(f64(math.f32_from_bits(u32(bits))))
+			fields[f.name] = f32_json(bits)
 		}
 		comps[schema.name] = json2.Any(fields)
 	}
@@ -599,6 +599,22 @@ fn f32_bits(v json2.Any) ?u64 {
 		return none
 	}
 	return u64(math.f32_bits(f32(x)))
+}
+
+// f32 bit deseni JSON degeri: sonlu sayi sayi olarak, sonsuz ve NaN metin olarak ("inf", "-inf", "nan").
+// JSON'da inf/NaN yoktur; alan tasmasi (ornegin hareket sonrasi) bu yoldan cikar.
+fn f32_json(bits u64) json2.Any {
+	x := f64(math.f32_from_bits(u32(bits)))
+	if x != x {
+		return json2.Any('nan')
+	}
+	if x > max_f32 {
+		return json2.Any('inf')
+	}
+	if x < -max_f32 {
+		return json2.Any('-inf')
+	}
+	return json2.Any(x)
 }
 
 fn hash_hex(h u64) string {

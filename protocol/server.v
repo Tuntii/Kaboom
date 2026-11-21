@@ -64,6 +64,13 @@ pub fn (mut s Server) handle(line string) ?string {
 	if has_id && !is_valid_id(id) {
 		return error_line(null_value(), invalid_request('id must be a number, a string or null'))
 	}
+	// Surum uyesi yoksa ya da "2.0" degilse istek yurutulmez; bildirimse yanit da yazilmaz.
+	if !is_jsonrpc_20(m) {
+		if !has_id {
+			return none
+		}
+		return error_line(id, invalid_request('jsonrpc member must be "2.0"'))
+	}
 	result := s.invoke(m) or {
 		if !has_id {
 			return none
@@ -119,6 +126,11 @@ fn (mut s Server) dispatch(method string, p map[string]json2.Any) !json2.Any {
 	return rpc_error(code_method_not_found, 'method not found', {
 		'hint': json2.Any('unknown method "${method}"; see schema.commands')
 	})
+}
+
+fn is_jsonrpc_20(m map[string]json2.Any) bool {
+	v := m['jsonrpc'] or { return false }
+	return v is string && (v as string) == '2.0'
 }
 
 fn is_valid_id(id json2.Any) bool {

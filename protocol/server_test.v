@@ -344,3 +344,55 @@ fn test_sim_reset_clears_world() {
 	assert str_of(pick(h, 'hash')).len == 18
 	assert str_of(pick(h, 'hash')).starts_with('0x')
 }
+
+fn test_f32_overflow_is_emitted_as_string_not_inf() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	_ = call(mut s,
+		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":3.4028234663852886e38},"Body":{"vx":3.4028234663852886e38}}}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":2,"method":"sim.step","params":{"n":1}}')
+	// Hareket x'i tasirir; cikti gecerli JSON kalmali ve inf metin olmali.
+	g := result_of(call(mut s,
+		'{"jsonrpc":"2.0","id":3,"method":"entity.get","params":{"entity":0}}'))
+	tr := pick(pick(g, 'components').as_map(), 'Transform').as_map()
+	assert str_of(pick(tr, 'x')) == 'inf'
+	assert pick(tr, 'y').f64() == 0
+}
+
+fn test_f32_input_out_of_range_is_rejected_unchanged() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	_ = call(mut s,
+		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":2}}}}')
+	assert error_code(call(mut s,
+		'{"jsonrpc":"2.0","id":2,"method":"component.set","params":{"entity":0,"component":"Transform","field":"x","value":1e39}}')) == -32602
+	assert error_code(call(mut s,
+		'{"jsonrpc":"2.0","id":3,"method":"component.set","params":{"entity":0,"component":"Transform","field":"x","value":-1e39}}')) == -32602
+	g := result_of(call(mut s,
+		'{"jsonrpc":"2.0","id":4,"method":"entity.get","params":{"entity":0}}'))
+	assert pick(pick(pick(g, 'components').as_map(), 'Transform').as_map(), 'x').f64() == 2
+}
+
+fn test_jsonrpc_member_must_be_2_0() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	// Surum uyesi yok: istek calismaz, id yansitilir.
+	r := call(mut s, '{"id":1,"method":"sim.step","params":{"n":1}}')
+	assert error_code(r) == -32600
+	assert at(r, 'id').u64() == 1
+	// Surum "1.0": yine calismaz.
+	r2 := call(mut s, '{"jsonrpc":"1.0","id":2,"method":"sim.step","params":{"n":1}}')
+	assert error_code(r2) == -32600
+	assert at(r2, 'id').u64() == 2
+	// Bildirim (id yok) ve yanlis surum: yanit yok, yurutulmez.
+	assert s.handle('{"method":"sim.step","params":{"n":1}}') == none
+	assert s.handle('{"jsonrpc":"1.0","method":"sim.step","params":{"n":1}}') == none
+	h := result_of(call(mut s, '{"jsonrpc":"2.0","id":5,"method":"sim.state_hash"}'))
+	assert pick(h, 'tick').u64() == 0
+}
