@@ -563,7 +563,9 @@ fn (s &Server) field_write(name string, schema ecs.ComponentSchema, fname string
 	bits := f32_bits(v) or { return invalid_params('${name}.${fname} must be a finite number') }
 	x := v.f64()
 	if x < f.min || x > f.max {
-		return invalid_params('value must be in [${range_text(f.min)}, ${range_text(f.max)}]')
+		d := component_field_ref(name, fname)
+		d.set('hint', str_val('${name}.${fname} must be in [${range_text(f.min)}, ${range_text(f.max)}]'))
+		return rpc_error(code_invalid_params, 'invalid params', d)
 	}
 	return FieldWrite{
 		field: u16(fi)

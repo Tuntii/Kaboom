@@ -405,7 +405,10 @@ fn test_range_violation_on_set_is_rejected_unchanged() {
 	bad := call(mut s,
 		'{"jsonrpc":"2.0","id":2,"method":"component.set","params":{"entity":0,"component":"Sprite","field":"r","value":1.5}}')
 	assert error_code(bad) == -32602
-	assert str_of(at(at(at(bad, 'error'), 'data'), 'hint')) == 'value must be in [0, 1]'
+	data := at(at(bad, 'error'), 'data')
+	assert str_of(pick(data, 'hint')) == 'Sprite.r must be in [0, 1]'
+	assert str_of(pick(data, 'component')) == 'Sprite'
+	assert str_of(pick(data, 'field')) == 'r'
 	assert has(call(mut s,
 		'{"jsonrpc":"2.0","id":3,"method":"component.set","params":{"entity":0,"component":"Sprite","field":"r","value":0.5}}'), 'result')
 	g := result_of(call(mut s,
@@ -419,8 +422,13 @@ fn test_range_violation_on_spawn_creates_nothing() {
 	defer {
 		s.close()
 	}
-	assert error_code(call(mut s,
-		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Sprite":{"size":-1}}}}')) == -32602
+	bad := call(mut s,
+		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Sprite":{"size":-1}}}}')
+	assert error_code(bad) == -32602
+	data := at(at(bad, 'error'), 'data')
+	assert str_of(pick(data, 'hint')) == 'Sprite.size must be in [0, 1000]'
+	assert str_of(pick(data, 'component')) == 'Sprite'
+	assert str_of(pick(data, 'field')) == 'size'
 	assert s.engine.world.alive_count() == 0
 }
 
