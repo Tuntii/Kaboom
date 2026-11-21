@@ -1,0 +1,55 @@
+module sim
+
+import cmd
+import ecs
+import memory
+
+// Tekrar oynatma sonucu: bitiş tick'i ve o tick'teki durum hash'i.
+pub struct ReplayResult {
+pub:
+	end_tick u64
+	hash     u64
+}
+
+// Kaydı taze bir Sim'de yeniden oynatır. Girdiler kayıt sırasıyla doğrudan uygulanır; kuyruk kullanılmaz.
+pub fn replay(rec cmd.Recording, reg &ecs.Registry) !ReplayResult {
+	// Doğrulama tahsis gerektirmez; bozuk kayıt bölge ayrılmadan reddedilir.
+	mut prev := u64(0)
+	for e in rec.entries {
+		if e.tick < prev {
+			return error('replay ayrıştı: tick ${e.tick}: kayıt sırası monoton değil (önceki tick ${prev})')
+		}
+		prev = e.tick
+	}
+	if rec.end_tick < prev {
+		return error('replay ayrıştı: tick ${rec.end_tick}: bitiş son girdiden (tick ${prev}) önce')
+	}
+
+	cfg := Config{
+		capacity:        rec.capacity
+		record_capacity: 1
+	}
+	need := cfg.bytes_needed(reg)
+	region := memory.reserve(need) or { return error('replay: bolge ayrilamadi (${need} bayt)') }
+	defer { memory.release(region) }
+	mut a := memory.LinearArena.new(region, need)
+	mut s := Sim.new(mut a, reg, cfg) or { return error('replay: Sim kurulamadi') }
+
+	for e in rec.entries {
+		for s.tick() < e.tick {
+			s.step()
+		}
+		r := cmd.apply(mut s.world, e.cmd)
+		// Spawn'ın ürettiği id kayıtla aynı olmalı; değilse dünya ayrışmıştır.
+		if r.status != .ok || (e.cmd.kind == .spawn && r.entity != e.cmd.entity) {
+			return error('replay ayrıştı: tick ${e.tick}')
+		}
+	}
+	for s.tick() < rec.end_tick {
+		s.step()
+	}
+	return ReplayResult{
+		end_tick: s.tick()
+		hash:     s.state_hash()
+	}
+}
