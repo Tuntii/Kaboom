@@ -49,7 +49,6 @@ struct Bench {
 mut:
 	world &ecs.World
 	f     render.QuadFields
-	buf   []render.InstancePayload
 	n     u32
 	cw    int
 	ch    int
@@ -195,22 +194,26 @@ fn main() {
 	mut b := &Bench{
 		world: &s.world
 		f:     f
-		buf:   []render.InstancePayload{len: int(entity_count)}
 		cw:    cw
 		ch:    ch
 		r:     r
 	}
-	// Draw olcumu icin n: bir kez doldurulur, draw yalnizca bunu cizer.
-	n0, skipped0 := render.prepare(b.world, b.f, alpha, mut b.buf)
+	// Renderer'in kendi tamponu: draw yalnizca bunu yukler. Ayri bir dizi kullanilirsa cizim sifir ornekle yapilir.
+	mut out := b.r.payload()
+	n0, skipped0 := render.prepare(b.world, b.f, alpha, mut out)
 	if skipped0 != 0 || n0 != entity_count {
 		panic('kurulum: ${n0} yazildi, ${skipped0} atlandi, beklenen ${entity_count}')
+	}
+	if out[0].size <= 0 {
+		panic('kurulum: payload[0].size ${out[0].size} (sifir ornek)')
 	}
 	b.n = n0
 
 	bp := b
 	f_prepare := fn [bp] () {
 		mut m := unsafe { bp }
-		_, skipped := render.prepare(m.world, m.f, alpha, mut m.buf)
+		mut o := m.r.payload()
+		_, skipped := render.prepare(m.world, m.f, alpha, mut o)
 		if skipped != 0 {
 			panic('prepare: kapasite asildi')
 		}
@@ -222,7 +225,8 @@ fn main() {
 	}
 	f_frame := fn [bp] () {
 		mut m := unsafe { bp }
-		n, skipped := render.prepare(m.world, m.f, alpha, mut m.buf)
+		mut o := m.r.payload()
+		n, skipped := render.prepare(m.world, m.f, alpha, mut o)
 		if skipped != 0 {
 			panic('frame: kapasite asildi')
 		}
