@@ -189,6 +189,8 @@ fn main() {
 		state: seed
 	}
 	setup(mut s, mut rng, f)
+	// Kurulum sonrası dünya özeti (m2 ile aynı 0x%016x biçimi); ölçümler dünyayı değiştirmez.
+	scene_hash := '0x${s.state_hash():016x}'
 	mem := arena.used()
 
 	mut b := &Bench{
@@ -248,6 +250,7 @@ fn main() {
 			ops_per_sample: 1
 			stats:          prepare_stats
 			mem_bytes:      mem
+			state_hash:     scene_hash
 			seed:           seed
 		},
 		benchkit.Result{
@@ -256,6 +259,7 @@ fn main() {
 			ops_per_sample: 1
 			stats:          draw_stats
 			mem_bytes:      mem
+			state_hash:     scene_hash
 			seed:           seed
 		},
 		benchkit.Result{
@@ -264,6 +268,7 @@ fn main() {
 			ops_per_sample: 1
 			stats:          frame_stats
 			mem_bytes:      mem
+			state_hash:     scene_hash
 			seed:           seed
 		},
 	]
