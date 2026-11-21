@@ -4,6 +4,7 @@ module protocol
 // arena her istekte sıfırlanır, yani döndürülen string'ler bir sonraki istek çağrısına kadar geçerlidir.
 #flag -I @VMODROOT/third_party/cJSON
 #include "@VMODROOT/third_party/cJSON/cJSON.c"
+#include "@VMODROOT/protocol/cj_bool.h"
 #include "@VMODROOT/protocol/cj_arena.h"
 
 @[typedef]

@@ -91,6 +91,21 @@ const command_docs = [
 		result: '{"tick": n, "hash": "0x<16 hex>"}'
 	},
 	CommandDoc{
+		method: 'sim.pause'
+		params: 'none'
+		result: '{"paused": true}; ilerleme durur, sim.step çalışmaya devam eder'
+	},
+	CommandDoc{
+		method: 'sim.resume'
+		params: 'none'
+		result: '{"paused": false}'
+	},
+	CommandDoc{
+		method: 'capture.screenshot'
+		params: '{"path": string}'
+		result: '{"path", "width", "height"}; yalnız pencereli çalışmada (vcore run); headless modda 1013'
+	},
+	CommandDoc{
 		method: 'record.start'
 		params: 'none'
 		result: '{}; yalnizca tick 0 ve bos dünyada'
@@ -404,6 +419,30 @@ fn (mut s Server) sim_reset() !Val {
 	s.region = region
 	s.engine = engine
 	return empty_object()
+}
+
+fn (mut s Server) sim_pause() Val {
+	s.is_paused = true
+	return kv('paused', bool_val(true))
+}
+
+fn (mut s Server) sim_resume() Val {
+	s.is_paused = false
+	return kv('paused', bool_val(false))
+}
+
+// Kanca pencereden gelir; headless modda yoktur ve 1013 döner.
+fn (s &Server) capture_screenshot(p Val) !Val {
+	path := string_param(p, 'path')!
+	hook := s.capture or {
+		return rpc_error(code_no_renderer, 'no renderer', hint_data('screenshots need a window: start vcore run'))
+	}
+	w, h := hook(path) or { return io_error(path, err.msg()) }
+	res := obj()
+	res.set('path', str_val(path))
+	res.set('width', num(f64(w)))
+	res.set('height', num(f64(h)))
+	return res
 }
 
 fn (s &Server) sim_state_hash() Val {

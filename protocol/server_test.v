@@ -586,3 +586,75 @@ fn test_request_after_close_reports_closed() {
 	assert out.contains('"code":-32603'), out
 	assert !out.contains('too large'), out
 }
+
+fn test_sim_pause_and_resume() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	assert !s.paused()
+	r := call(mut s, '{"jsonrpc":"2.0","id":1,"method":"sim.pause"}')
+	assert pick(result_of(r), 'paused').as_bool() == true
+	assert s.paused()
+	r2 := call(mut s, '{"jsonrpc":"2.0","id":2,"method":"sim.resume"}')
+	assert pick(result_of(r2), 'paused').as_bool() == false
+	assert !s.paused()
+}
+
+fn test_advance_is_noop_while_paused() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	s.advance(2)
+	assert s.engine.tick() == 2
+	call(mut s, '{"jsonrpc":"2.0","id":1,"method":"sim.pause"}')
+	s.advance(5)
+	assert s.engine.tick() == 2
+	// sim.step protokolle duraklatılmışken de çalışır.
+	r := call(mut s, '{"jsonrpc":"2.0","id":2,"method":"sim.step","params":{"n":3}}')
+	assert pick(result_of(r), 'tick').f64() == 5
+}
+
+fn test_screenshot_without_hook_is_no_renderer() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	r := call(mut s, '{"jsonrpc":"2.0","id":1,"method":"capture.screenshot","params":{"path":"a.png"}}')
+	assert error_code(r) == 1013
+	assert str_of(pick(pick(pick(r, 'error'), 'data'), 'hint')) == 'screenshots need a window: start vcore run'
+}
+
+// Adlandırılmış kanca: fonksiyon değişmezi closure üretmez (V closure kodu cJSON makrolarıyla çakışır).
+fn hook_disk_full(path string) !(int, int) {
+	return error('disk dolu')
+}
+
+fn hook_64x32(path string) !(int, int) {
+	return 64, 32
+}
+
+fn test_screenshot_hook_error_is_io_error() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	s.set_capture(hook_disk_full)
+	r := call(mut s, '{"jsonrpc":"2.0","id":1,"method":"capture.screenshot","params":{"path":"a.png"}}')
+	assert error_code(r) == 1010
+	assert str_of(pick(pick(pick(r, 'error'), 'data'), 'hint')).contains('disk dolu')
+}
+
+fn test_screenshot_hook_result() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	s.set_capture(hook_64x32)
+	r := call(mut s, '{"jsonrpc":"2.0","id":1,"method":"capture.screenshot","params":{"path":"shots/a.png"}}')
+	res := result_of(r)
+	assert pick(res, 'width').f64() == 64
+	assert pick(res, 'height').f64() == 32
+	assert str_of(pick(res, 'path')) == 'shots/a.png'
+}

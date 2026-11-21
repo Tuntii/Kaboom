@@ -23,6 +23,8 @@ pub const code_readonly_field = 1009
 pub const code_io_error = 1010
 pub const code_replay_diverged = 1011
 pub const code_invalid_command = 1012
+// Pencere yok (headless): ekran görüntüsü alınamaz.
+pub const code_no_renderer = 1013
 
 // Yapılandırılmış hata: ajan kendi hatasını düzeltebilsin diye kod, mesaj ve data taşır.
 // data bir nesne düğümüdür ve istek arenasında yaşar.

@@ -17,6 +17,9 @@ mut:
 	region     &u8
 	req_region &u8
 	engine     sim.Sim
+	is_paused  bool
+	// Ekran görüntüsü kancası: yalnız pencere varken (vcore run) kurulur.
+	capture ?fn (path string) !(int, int)
 }
 
 // Bölgeyi cfg.bytes_needed kadar rezerve eder, istek arenasını ayırır ve Sim'i kurar.
@@ -55,6 +58,33 @@ pub fn (mut s Server) close() {
 		s.req_region = unsafe { nil }
 		arena_set(unsafe { nil }, 0)
 	}
+}
+
+// Simülasyonu steps adım ilerletir; duraklatılmışken no-op. sim.step bu yoldan geçmez, duraklatılmışken de çalışır.
+pub fn (mut s Server) advance(steps u32) {
+	if s.is_paused {
+		return
+	}
+	for _ in 0 .. steps {
+		s.engine.step()
+	}
+}
+
+pub fn (s &Server) world() &ecs.World {
+	return &s.engine.world
+}
+
+pub fn (s &Server) registry() &ecs.Registry {
+	return &s.reg
+}
+
+pub fn (s &Server) paused() bool {
+	return s.is_paused
+}
+
+// Ekran görüntüsü kancasını kurar; run komutu pencere kurulduktan sonra çağırır.
+pub fn (mut s Server) set_capture(f fn (path string) !(int, int)) {
+	s.capture = f
 }
 
 // Tek satır istek alir; yanıt satırını ya da none döner (bildirim ve bos satır).
@@ -152,6 +182,9 @@ fn (mut s Server) dispatch(method string, p Val) !Val {
 		'sim.step' { return s.sim_step(p) }
 		'sim.reset' { return s.sim_reset() }
 		'sim.state_hash' { return s.sim_state_hash() }
+		'sim.pause' { return s.sim_pause() }
+		'sim.resume' { return s.sim_resume() }
+		'capture.screenshot' { return s.capture_screenshot(p) }
 		'record.start' { return s.record_start() }
 		'record.stop' { return s.record_stop(p) }
 		'replay.run' { return s.replay_run(p) }
