@@ -30,19 +30,23 @@ pub fn replay(rec cmd.Recording, reg &ecs.Registry) !ReplayResult {
 		record_capacity: 1
 	}
 	need := cfg.bytes_needed(reg)
-	region := memory.reserve(need) or { return error('replay: bolge ayrilamadi (${need} bayt)') }
+	region := memory.reserve(need) or { return error('replay setup failed: region reservation failed (${need} bytes)') }
 	defer { memory.release(region) }
 	mut a := memory.LinearArena.new(region, need)
-	mut s := Sim.new(mut a, reg, cfg) or { return error('replay: Sim kurulamadi') }
+	mut s := Sim.new(mut a, reg, cfg) or { return error('replay setup failed: Sim could not be created') }
 
-	for e in rec.entries {
+	// Ayrışma "replay diverged: " önekiyle döner; protokol bu öneki 1011 olarak eşler.
+	for i, e in rec.entries {
 		for s.tick() < e.tick {
 			s.step()
 		}
 		r := cmd.apply(mut s.world, e.cmd)
+		if r.status != .ok {
+			return error('replay diverged: tick ${e.tick} entry ${i} status ${r.status} entity ${e.cmd.entity}')
+		}
 		// Spawn'ın ürettiği id kayıtla aynı olmalı; değilse dünya ayrışmıştır.
-		if r.status != .ok || (e.cmd.kind == .spawn && r.entity != e.cmd.entity) {
-			return error('replay ayrıştı: tick ${e.tick}')
+		if e.cmd.kind == .spawn && r.entity != e.cmd.entity {
+			return error('replay diverged: tick ${e.tick} entry ${i} status ok expected_entity ${e.cmd.entity} got ${r.entity}')
 		}
 	}
 	for s.tick() < rec.end_tick {

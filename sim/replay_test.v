@@ -157,11 +157,11 @@ fn test_replay_detects_divergence() {
 	}
 	assert first_set >= 0
 	bad_set := with_entity(rec, first_set, ecs.make_entity(9999, 0))
-	assert replay_error(bad_set, &reg) == 'replay ayrıştı: tick ${rec.entries[first_set].tick}'
+	assert replay_error(bad_set, &reg).starts_with('replay diverged: tick ${rec.entries[first_set].tick} entry ${first_set} ')
 
 	// Spawn'ın üreteceği id farklıysa hata: ilk spawn tick 0'da.
 	bad_spawn := with_entity(rec, 0, ecs.make_entity(9999, 0))
-	assert replay_error(bad_spawn, &reg) == 'replay ayrıştı: tick 0'
+	assert replay_error(bad_spawn, &reg).starts_with('replay diverged: tick 0 entry 0 ')
 }
 
 // Sıfır olmayan tick'te ayrışma: tick 500'deki ilk set_field ve spawn hata mesajında tick'i adlandırmalı.
@@ -187,10 +187,10 @@ fn test_replay_divergence_reports_nonzero_tick() {
 	assert set_idx >= 0 && spawn_idx >= 0
 
 	bad_set := with_entity(rec, set_idx, ecs.make_entity(9999, 0))
-	assert replay_error(bad_set, &reg) == 'replay ayrıştı: tick 500'
+	assert replay_error(bad_set, &reg).starts_with('replay diverged: tick 500 ')
 
 	bad_spawn := with_entity(rec, spawn_idx, ecs.make_entity(9999, 0))
-	assert replay_error(bad_spawn, &reg) == 'replay ayrıştı: tick 500'
+	assert replay_error(bad_spawn, &reg).starts_with('replay diverged: tick 500 ')
 }
 
 // Kapasitesi ayrılamayacak kadar büyük kayıt: bölge ayrılamaz, hata döner, panic olmaz.
@@ -210,7 +210,7 @@ fn test_replay_reservation_failure_returns_error() {
 		]
 	}
 	msg := replay_error(rec, &reg)
-	assert msg.starts_with('replay: bolge ayrilamadi')
+	assert msg.starts_with('replay setup failed: ')
 }
 
 fn test_replay_rejects_non_monotonic_ticks() {
