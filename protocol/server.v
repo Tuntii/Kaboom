@@ -63,14 +63,24 @@ pub fn (mut s Server) close() {
 // yanıt bir sonraki handle çağrısına kadar geçerlidir; kalıcı tutulacaksa çağıran kopyalamalıdır.
 // Arena dolarsa yanıt, arenaya ihtiyaç duymayan sabit bir -32600 satırıdır.
 pub fn (mut s Server) handle(line string) ?string {
-	arena_reset()
 	text := trim_view(line)
 	if text == '' {
 		return none
 	}
-	// Ayrıştırıcı özyinelemelidir: derin satır yığını taşırmadan decode'a girmeden reddedilir.
-	if json_nesting_too_deep(text) {
+	// Kapalı sunucunun arenası yok (kancalar boş bölgeye bağlı): ayrıştırılamaz, sabit hata döner.
+	// Bildirimler de bu satırı alır; kapalı sunucuda id okunamadığı için bilinçli bir sapmadır.
+	if s.region == unsafe { nil } {
+		return closed_line
+	}
+	arena_reset()
+	// Ayrıştırıcı özyinelemelidir ve NUL ile kesilen metinleri (strlen görünümü) kabul etmez:
+	// derinlik ve NUL denetimi decode'a girmeden yapılır.
+	too_deep, has_nul := scan_json(text)
+	if too_deep {
 		return error_line(null_val(), rpc_error(code_parse, 'parse error', hint_data('JSON nesting deeper than 64')))
+	}
+	if has_nul {
+		return error_line(null_val(), rpc_error(code_parse, 'parse error', hint_data('NUL characters are not allowed')))
 	}
 	req := parse(text) or {
 		if exhausted() {
@@ -168,15 +178,24 @@ fn is_trim_space(c u8) bool {
 	return c == ` ` || c == `\n` || c == `\t` || c == `\v` || c == `\f` || c == `\r`
 }
 
-// [ ve { derinliği JSON metinlerinde (tırnak içi hariç) 64'ü aşarsa true.
-fn json_nesting_too_deep(text string) bool {
+// Tek kaçışlı tarama: [ ve { derinliği (tırnak içi hariç) 64'ü aşarsa too_deep; ham NUL baytı ya da
+// tırnak içinde \u0000 kaçışı varsa has_nul. "\\u0000" (kaçışlı ters eğik çizgi) NUL değildir.
+fn scan_json(text string) (bool, bool) {
 	mut depth := 0
 	mut in_str := false
+	mut has_nul := false
 	mut i := 0
 	for i < text.len {
 		c := text[i]
+		if c == 0 {
+			has_nul = true
+		}
 		if in_str {
 			if c == `\\` {
+				if i + 5 < text.len && text[i + 1] == `u` && text[i + 2] == `0` && text[i + 3] == `0`
+					&& text[i + 4] == `0` && text[i + 5] == `0` {
+					has_nul = true
+				}
 				i += 2
 				continue
 			}
@@ -188,14 +207,14 @@ fn json_nesting_too_deep(text string) bool {
 		} else if c == `[` || c == `{` {
 			depth++
 			if depth > 64 {
-				return true
+				return true, has_nul
 			}
 		} else if c == `]` || c == `}` {
 			depth--
 		}
 		i++
 	}
-	return false
+	return false, has_nul
 }
 
 fn is_jsonrpc_20(m Val) bool {
@@ -208,7 +227,10 @@ fn is_valid_id(id Val) bool {
 }
 
 // Arena dolmuşken kurulamayan yanıt için sabit satır (arenaya dokunmaz).
-const too_large_line = '{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid request","data":{"hint":"request or response too large"}}}'
+// Kapalı sunucu yanıtı (id null): arenaya dokunmaz.
+const closed_line = '{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"internal error","data":{"hint":"server is closed; create a new server"}}}'
+
+const too_large_line ='{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid request","data":{"hint":"request or response too large"}}}'
 
 // Yanıt kodlanır; arena dolduysa sabit satır döner.
 fn finish_line(m Val) string {

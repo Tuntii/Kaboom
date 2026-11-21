@@ -545,3 +545,44 @@ fn test_arena_exhaustion_returns_static_error() {
 	arena_set(s.req_region, request_arena_bytes)
 	assert has(call(mut s, '{"jsonrpc":"2.0","id":2,"method":"sim.state_hash"}'), 'result')
 }
+
+// Tırnak içi \u0000 kaçışı NUL olarak kabul edilmez: metin strlen ile kesilirdi.
+fn test_escaped_nul_is_parse_error() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	assert error_code(call(mut s, r'{"jsonrpc":"2.0","id":1,"method":"sim.step\u0000x"}')) == -32700
+	assert error_code(call(mut s, r'{"jsonrpc":"2.0","id":1,"me\u0000thod":"sim.step"}')) == -32700
+}
+
+// Ham NUL baytı satırın herhangi bir yerinde reddedilir.
+fn test_raw_nul_byte_is_parse_error() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":1,"me\x00thod":"sim.step"}')) == -32700
+	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":1,"method":"sim.step"}\x00')) == -32700
+}
+
+// Kaçışlı ters eğik çizgiden sonra gelen u0000 metni NUL değildir: istek çalışır.
+fn test_escaped_backslash_u0000_is_not_nul() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	r := call(mut s, r'{"jsonrpc":"2.0","id":2,"method":"sim.state_hash","params":{"x":"\\u0000"}}')
+	assert has(r, 'result')
+	assert !has(r, 'error')
+}
+
+// Kapatılmış sunucu sabit hata yanıtı verir; arenaya dokunmaz.
+fn test_request_after_close_reports_closed() {
+	mut s := new_server()
+	s.close()
+	out := s.handle('{"jsonrpc":"2.0","id":1,"method":"sim.state_hash"}') or { panic('yanıt yok') }
+	assert out.contains('server is closed; create a new server'), out
+	assert out.contains('"code":-32603'), out
+	assert !out.contains('too large'), out
+}
