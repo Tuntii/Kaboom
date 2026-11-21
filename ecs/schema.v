@@ -83,7 +83,7 @@ pub fn (mut r Registry) register[T]() !u16 {
 			min:  -default_range
 			max:  default_range
 		}
-		// EntityID, u64 takma adıdır; u64 kontrolünden önce ayrılır.
+		// EntityID u64 takma adıdır; ayrı bir dal olarak entity tipine eşlenir.
 		$if f.typ is f32 {
 			fs.typ = .f32_
 		} $else $if f.typ is i32 {
@@ -96,13 +96,15 @@ pub fn (mut r Registry) register[T]() !u16 {
 			return error('desteklenmeyen alan tipi: ${name}.${f.name}')
 		}
 		// Öznitelik biçimi: `unit: 'm'`; tek kelimelik olan `readonly` gibi bayraktır.
+		// Bilinmeyen anahtar hata verir: yazım hatası (ör. `unt`) sessizce yutulmaz.
 		for attr in f.attrs {
 			parts := attr.split_nth(': ', 2)
 			if parts.len == 1 {
 				if parts[0] == 'readonly' {
 					fs.readonly = true
+					continue
 				}
-				continue
+				return error('bilinmeyen öznitelik: ${name}.${f.name} (${parts[0]})')
 			}
 			value := parts[1].trim("'")
 			match parts[0] {
@@ -122,7 +124,9 @@ pub fn (mut r Registry) register[T]() !u16 {
 						return error('max sayıya çevrilemedi: ${name}.${f.name}')
 					}
 				}
-				else {}
+				else {
+					return error('bilinmeyen öznitelik: ${name}.${f.name} (${parts[0]})')
+				}
 			}
 		}
 		fields << fs

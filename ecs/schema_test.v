@@ -70,3 +70,19 @@ fn test_field_type_sizes() {
 	assert FieldType.symbol.size() == 4
 	assert FieldType.entity.name() == 'entity'
 }
+
+struct BadAttrKey {
+pub mut:
+	speed f32 @[unt: 'm']
+}
+
+// Bilinmeyen öznitelik anahtarı sessizce atılmaz: hata anahtarı ve alanı adlandırmalı.
+fn test_unknown_attr_key_fails_fast() {
+	mut r := Registry{}
+	r.register[BadAttrKey]() or {
+		assert err.msg().contains('unt')
+		assert err.msg().contains('speed')
+		return
+	}
+	assert false
+}
