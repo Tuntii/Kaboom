@@ -209,6 +209,7 @@ fn main() {
 	hash_stats := benchkit.measure(warmup, iterations, f_hash)
 
 	results := [
+		// Warmup + iterations adimdan sonraki hash; 1000 adimlik determinizm hash'i degildir.
 		benchkit.Result{
 			name:           'tick_motion_100k'
 			entities:       entity_count

@@ -186,3 +186,68 @@ fn test_compare_small_change_not_slower() {
 	assert !out.contains('YENI')
 	assert !out.contains('KAYIP')
 }
+
+fn test_compare_state_hash() {
+	prev := Report{
+		results: [
+			Result{
+				name:       'tick_motion_100k'
+				stats:      Stats{
+					median_ns: 100
+					p99_ns:    200
+				}
+				state_hash: '0xaa'
+			},
+			Result{
+				name:       'same'
+				stats:      Stats{
+					median_ns: 100
+					p99_ns:    200
+				}
+				state_hash: '0x11'
+			},
+			Result{
+				name:       'empty'
+				stats:      Stats{
+					median_ns: 100
+					p99_ns:    200
+				}
+				state_hash: ''
+			},
+		]
+	}
+	cur := Report{
+		results: [
+			Result{
+				name:       'tick_motion_100k'
+				stats:      Stats{
+					median_ns: 100
+					p99_ns:    200
+				}
+				state_hash: '0xbb'
+			},
+			Result{
+				name:       'same'
+				stats:      Stats{
+					median_ns: 100
+					p99_ns:    200
+				}
+				state_hash: '0x11'
+			},
+			Result{
+				name:       'empty'
+				stats:      Stats{
+					median_ns: 100
+					p99_ns:    200
+				}
+				state_hash: '0xcc'
+			},
+		]
+	}
+	out := compare(prev, cur)
+	// Farkli hash: satir uretilmeli.
+	assert out.contains('tick_motion_100k: HASH DEGISTI (0xaa -> 0xbb)')
+	// Esit hash ve bos hash: satir uretilmemeli.
+	assert !out.contains('same: HASH DEGISTI')
+	assert !out.contains('empty: HASH DEGISTI')
+}

@@ -127,6 +127,10 @@ pub fn compare(prev Report, cur Report) string {
 				sb.write_string(' YAVASLADI')
 			}
 			sb.write_string('\n')
+			// Iki tarafta da hash varsa ve farkliysa determinizm sapmasi: ayri satir.
+			if p.state_hash != '' && r.state_hash != '' && p.state_hash != r.state_hash {
+				sb.write_string('${r.name}: HASH DEGISTI (${p.state_hash} -> ${r.state_hash})\n')
+			}
 			break
 		}
 		if !found {
