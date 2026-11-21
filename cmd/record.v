@@ -98,31 +98,49 @@ pub fn (r &Recorder) save(path string, world_capacity u32, end_tick u64) ! {
 	if n > 0 {
 		unsafe { vmemcpy(&buf[record_header_size], r.buf, n * int(sizeof(RecordEntry))) }
 	}
+	put_u32(mut buf, 12, record_checksum(buf[int(record_header_size)..]))
 	os.write_file_array(path, buf)!
 }
 
-// Dosyayı okur ve kopyalamadan önce başlık ve uzunluğu, kopyaladıktan sonra her girdiyi doğrular.
+// Dosyayı okur. Önce yalnızca 32 baytlık başlık okunur ve uzunluk doğrulanır; gövde ondan sonra okunur.
+// Sonra checksum ve her girdi doğrulanır: dosya güvenilmez girdi sayılır.
 pub fn load_recording(path string) !Recording {
-	data := os.read_bytes(path)!
-	if u64(data.len) < record_header_size {
-		return error('kayit dosyasi cok kisa: ${data.len} bayt')
+	mut f := os.open(path)!
+	defer {
+		f.close()
 	}
-	if get_u32(data, 0) != record_magic {
+	mut hdr := []u8{len: int(record_header_size)}
+	got := f.read_from(0, mut hdr) or { return error('kayit dosyasi okunamadi: ${err}') }
+	if u64(got) < record_header_size {
+		return error('kayit dosyasi cok kisa: ${got} bayt')
+	}
+	if get_u32(hdr, 0) != record_magic {
 		return error('kayit dosyasi: magic yanlis')
 	}
-	if get_u32(data, 4) != record_version {
-		return error('kayit dosyasi: desteklenmeyen surum ${get_u32(data, 4)}')
+	if get_u32(hdr, 4) != record_version {
+		return error('kayit dosyasi: desteklenmeyen surum ${get_u32(hdr, 4)}')
 	}
-	count := get_u64(data, 24)
-	body := u64(data.len) - record_header_size
+	count := get_u64(hdr, 24)
+	size := os.file_size(path)
+	body := size - record_header_size
 	// count <= body/32 önce kontrol edilir: count*32 bu noktada taşamaz.
 	if count > body / 32 || body != count * 32 {
-		return error('kayit dosyasi: ${data.len} bayt, sayac ${count} kayit icin uyusmuyor')
+		return error('kayit dosyasi: ${size} bayt, sayac ${count} kayit icin uyusmuyor')
 	}
 	n := int(count)
+	mut data := []u8{len: int(body)}
+	if n > 0 {
+		read := f.read_from(record_header_size, mut data) or { return error('kayit dosyasi govdesi okunamadi: ${err}') }
+		if u64(read) != body {
+			return error('kayit dosyasi govdesi eksik: ${read} / ${body} bayt')
+		}
+	}
+	if record_checksum(data) != get_u32(hdr, 12) {
+		return error('kayit dosyasi: checksum mismatch')
+	}
 	mut entries := []RecordEntry{len: n}
 	if n > 0 {
-		unsafe { vmemcpy(&entries[0], &data[int(record_header_size)], int(body)) }
+		unsafe { vmemcpy(&entries[0], &data[0], int(body)) }
 	}
 	for i, e in entries {
 		kind := u8(e.cmd.kind)
@@ -136,12 +154,31 @@ pub fn load_recording(path string) !Recording {
 		if e.cmd.pad != 0 {
 			return error('kayit ${i}: pad sifir degil')
 		}
+		if e.cmd.source == .script {
+			return error('kayit ${i}: script kaynakli komut kayda girmez')
+		}
+		if i > 0 && e.tick < entries[i - 1].tick {
+			return error('kayit ${i}: tick geriye gidiyor (${e.tick} < ${entries[i - 1].tick})')
+		}
+	}
+	end_tick := get_u64(hdr, 16)
+	if n > 0 && end_tick < entries[n - 1].tick {
+		return error('kayit dosyasi: end_tick ${end_tick} son kayit tick ${entries[n - 1].tick} altinda')
 	}
 	return Recording{
-		capacity: get_u32(data, 8)
-		end_tick: get_u64(data, 16)
+		capacity: get_u32(hdr, 8)
+		end_tick: end_tick
 		entries:  entries
 	}
+}
+
+// Gövde bütünlük sağlaması: FNV-1a 64'ün alt 32 biti (bayt bayt). Başlığın reserved alanına yazılır.
+fn record_checksum(body []u8) u32 {
+	mut h := u64(0xcbf29ce484222325)
+	for b in body {
+		h = (h ^ u64(b)) * u64(0x100000001b3)
+	}
+	return u32(h)
 }
 
 fn put_u32(mut buf []u8, off int, v u32) {

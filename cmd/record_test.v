@@ -33,6 +33,14 @@ fn patch_byte(path string, off int, v u8) {
 	os.write_file_array(path, data) or { panic(err) }
 }
 
+// Gövde baytını değiştirip checksum'u yeniden mühürler: girdi doğrulamasının ulaşılmasını sağlar.
+fn patch_entry_byte(path string, off int, v u8) {
+	mut data := os.read_bytes(path) or { panic(err) }
+	data[off] = v
+	put_u32(mut data, 12, record_checksum(data[int(record_header_size)..]))
+	os.write_file_array(path, data) or { panic(err) }
+}
+
 fn load_fails(path string) bool {
 	load_recording(path) or { return true }
 	return false
@@ -64,7 +72,7 @@ fn test_save_load_roundtrip() {
 	}
 	rec.start()
 	rec.append(1, Command{ kind: .set_field, source: .agent, entity: 5, comp: 0, field: 1, value: 77 })
-	rec.append(2, Command{ kind: .spawn, source: .script, entity: 6 })
+	rec.append(2, Command{ kind: .spawn, source: .agent, entity: 6 })
 	rec.append(2, Command{ kind: .despawn, source: .editor, entity: 6 })
 	path := temp_record_path('roundtrip')
 	defer {
@@ -76,7 +84,7 @@ fn test_save_load_roundtrip() {
 	assert got.end_tick == 42
 	assert got.entries.len == 3
 	assert got.entries[0] == RecordEntry{ tick: 1, cmd: Command{ kind: .set_field, source: .agent, entity: 5, comp: 0, field: 1, value: 77 } }
-	assert got.entries[1] == RecordEntry{ tick: 2, cmd: Command{ kind: .spawn, source: .script, entity: 6 } }
+	assert got.entries[1] == RecordEntry{ tick: 2, cmd: Command{ kind: .spawn, source: .agent, entity: 6 } }
 	assert got.entries[2] == RecordEntry{ tick: 2, cmd: Command{ kind: .despawn, source: .editor, entity: 6 } }
 }
 
@@ -115,7 +123,7 @@ fn test_load_rejects_bad_kind_with_index() {
 		os.rm(path) or {}
 	}
 	write_valid_recording(path)
-	patch_byte(path, 32 + 32 + 8, 5) // entry 1, cmd.kind = 5 (geçersiz)
+	patch_entry_byte(path, 32 + 32 + 8, 5) // entry 1, cmd.kind = 5 (geçersiz)
 	load_recording(path) or {
 		assert err.msg().contains('kayit 1')
 		return
@@ -129,7 +137,7 @@ fn test_load_rejects_bad_source_with_index() {
 		os.rm(path) or {}
 	}
 	write_valid_recording(path)
-	patch_byte(path, 32 + 0 + 9, 3) // entry 0, cmd.source = 3 (geçersiz)
+	patch_entry_byte(path, 32 + 0 + 9, 3) // entry 0, cmd.source = 3 (geçersiz)
 	load_recording(path) or {
 		assert err.msg().contains('kayit 0')
 		return
@@ -143,7 +151,7 @@ fn test_load_rejects_nonzero_pad_with_index() {
 		os.rm(path) or {}
 	}
 	write_valid_recording(path)
-	patch_byte(path, 32 + 32 + 14, 1) // entry 1, cmd.pad != 0
+	patch_entry_byte(path, 32 + 32 + 14, 1) // entry 1, cmd.pad != 0
 	load_recording(path) or {
 		assert err.msg().contains('kayit 1')
 		return
@@ -170,4 +178,74 @@ fn test_overflow_blocks_save() {
 		return
 	}
 	assert false
+}
+
+fn test_load_rejects_checksum_mismatch() {
+	path := temp_record_path('bad_checksum')
+	defer {
+		os.rm(path) or {}
+	}
+	write_valid_recording(path)
+	patch_byte(path, 32 + 5, 0x7F) // gövde baytı değişti, checksum yeniden mühürlenmedi
+	load_recording(path) or {
+		assert err.msg().contains('checksum mismatch')
+		return
+	}
+	assert false
+}
+
+fn test_load_rejects_script_source_with_index() {
+	region, mut rec := recorder_env(4)
+	defer {
+		memory.release(region)
+	}
+	rec.start()
+	rec.append(1, Command{ kind: .spawn, source: .agent })
+	rec.append(2, Command{ kind: .spawn, source: .script })
+	path := temp_record_path('script_source')
+	defer {
+		os.rm(path) or {}
+	}
+	rec.save(path, 100, 2) or { panic(err) }
+	load_recording(path) or {
+		assert err.msg().contains('kayit 1')
+		assert err.msg().contains('script')
+		return
+	}
+	assert false
+}
+
+fn test_load_rejects_non_monotonic_ticks_with_index() {
+	region, mut rec := recorder_env(4)
+	defer {
+		memory.release(region)
+	}
+	rec.start()
+	rec.append(5, Command{ kind: .spawn, source: .agent })
+	rec.append(3, Command{ kind: .spawn, source: .agent })
+	path := temp_record_path('non_monotonic')
+	defer {
+		os.rm(path) or {}
+	}
+	rec.save(path, 100, 5) or { panic(err) }
+	load_recording(path) or {
+		assert err.msg().contains('kayit 1')
+		return
+	}
+	assert false
+}
+
+fn test_load_rejects_end_tick_before_last_entry() {
+	region, mut rec := recorder_env(4)
+	defer {
+		memory.release(region)
+	}
+	rec.start()
+	rec.append(5, Command{ kind: .spawn, source: .agent })
+	path := temp_record_path('end_tick')
+	defer {
+		os.rm(path) or {}
+	}
+	rec.save(path, 100, 4) or { panic(err) }
+	assert load_fails(path)
 }
