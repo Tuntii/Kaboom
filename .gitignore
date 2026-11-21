@@ -8,3 +8,5 @@ bin/
 .superpowers/
 # Kayıt dosyaları (test/ajan çıktısı)
 *.vcrec
+# AI iş akışı dosyaları (spec, plan, backlog)
+docs/superpowers/
