@@ -54,6 +54,8 @@ fn run_headless(args []string) {
 			println(resp)
 			flush_stdout()
 		}
+		// Yanıt satıra referans tutmaz (ayrıştırma kopyalar); satır her istekte serbest bırakılır.
+		unsafe { line.free() }
 	}
 }
 

@@ -165,6 +165,8 @@ fn run_window(args []string) {
 				println(resp)
 				flush_stdout()
 			}
+			// Yanıt satıra referans tutmaz; satır her istekte serbest bırakılır.
+			unsafe { line.free() }
 		}
 		if !win.poll() {
 			break

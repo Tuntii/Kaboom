@@ -719,3 +719,19 @@ fn test_too_large_response_truncates_long_string_id() {
 	assert str_of(pick(r, 'id')) == 'x'.repeat(64), out
 	arena_set(s.req_region, request_arena_bytes(s.cfg))
 }
+
+// Yanıt istek satırına referans tutmaz: satır serbest bırakılıp üzerine yazıldıktan sonra da yanıt doğrudur.
+fn test_response_does_not_reference_request_line() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	line := '{"jsonrpc":"2.0","id":"req-1","method":"sim.state_hash"}'.clone()
+	out := s.handle(line) or { panic('yanıt yok') }
+	unsafe { line.free() }
+	mut junk := []u8{len: 64, init: u8(0x41)}
+	assert junk.len == 64
+	r := parse(out) or { panic('yanıt JSON degil: ${out}') }
+	assert str_of(pick(r, 'id')) == 'req-1', out
+	assert has(r, 'result')
+}
