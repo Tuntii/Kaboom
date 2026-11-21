@@ -60,6 +60,11 @@ fn record_live_scenario(path string, reg &ecs.Registry) u64 {
 	for _ in 0 .. 500 {
 		s.step()
 	}
+	// Sıfır olmayan tick'te spawn: kayıtlı id'nin ayrışma kontrolü de orada sınanır.
+	s.push(cmd.Command{
+		kind:   .spawn
+		source: .agent
+	})
 	s.push(cmd.Command{
 		kind:   .set_field
 		source: .agent
@@ -157,6 +162,55 @@ fn test_replay_detects_divergence() {
 	// Spawn'ın üreteceği id farklıysa hata: ilk spawn tick 0'da.
 	bad_spawn := with_entity(rec, 0, ecs.make_entity(9999, 0))
 	assert replay_error(bad_spawn, &reg) == 'replay ayrıştı: tick 0'
+}
+
+// Sıfır olmayan tick'te ayrışma: tick 500'deki ilk set_field ve spawn hata mesajında tick'i adlandırmalı.
+fn test_replay_divergence_reports_nonzero_tick() {
+	reg := ecs.core_registry() or { panic(err) }
+	path := replay_test_path('divergence_500')
+	defer {
+		os.rm(path) or {}
+	}
+	record_live_scenario(path, &reg)
+	rec := cmd.load_recording(path) or { panic(err) }
+
+	mut set_idx := -1
+	mut spawn_idx := -1
+	for i, e in rec.entries {
+		if e.tick == 500 && e.cmd.kind == .set_field && set_idx < 0 {
+			set_idx = i
+		}
+		if e.tick == 500 && e.cmd.kind == .spawn && spawn_idx < 0 {
+			spawn_idx = i
+		}
+	}
+	assert set_idx >= 0 && spawn_idx >= 0
+
+	bad_set := with_entity(rec, set_idx, ecs.make_entity(9999, 0))
+	assert replay_error(bad_set, &reg) == 'replay ayrıştı: tick 500'
+
+	bad_spawn := with_entity(rec, spawn_idx, ecs.make_entity(9999, 0))
+	assert replay_error(bad_spawn, &reg) == 'replay ayrıştı: tick 500'
+}
+
+// Kapasitesi ayrılamayacak kadar büyük kayıt: bölge ayrılamaz, hata döner, panic olmaz.
+fn test_replay_reservation_failure_returns_error() {
+	reg := ecs.core_registry() or { panic(err) }
+	rec := cmd.Recording{
+		capacity: 0xFFFF_FFF0
+		end_tick: 1
+		entries:  [
+			cmd.RecordEntry{
+				tick: 0
+				cmd:  cmd.Command{
+					kind:   .spawn
+					source: .agent
+				}
+			},
+		]
+	}
+	msg := replay_error(rec, &reg)
+	assert msg.starts_with('replay: bolge ayrilamadi')
 }
 
 fn test_replay_rejects_non_monotonic_ticks() {
