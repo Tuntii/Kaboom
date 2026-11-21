@@ -149,6 +149,8 @@ pub fn Renderer.new(capacity u32) !Renderer {
 	bind_vertex_array(0)
 	bind_buffer(gl_array_buffer, 0)
 	view_loc := get_uniform_location(program, c'u_view')
+	// Koyu gri zemin: her karede temizleme bu rengi kullanır; GL varsayılanı siyahtır.
+	clear_color(0.08, 0.08, 0.10, 1.0)
 	return Renderer{
 		program:  program
 		vao:      vao

@@ -154,8 +154,8 @@ fn test_render_scenario_screenshot() {
 
 	assert_rgb_near(render_pixel(pixels, pw, red_x, mid_y), [u8(255), 0, 0], 'kirmizi merkez')
 	assert_rgb_near(render_pixel(pixels, pw, blue_x, mid_y), [u8(0), 0, 255], 'mavi merkez')
-	// Temizleme rengi: GL varsayılanı (0,0,0); production kodu glClearColor çağırmıyor.
-	assert_rgb_near(render_pixel(pixels, pw, 0, 0), [u8(0), 0, 0], 'kose')
+	// Temizleme rengi: Renderer.new koyu gri (0.08, 0.08, 0.10) ayarlar; 0.08*255 ~ 20, 0.10*255 ~ 26.
+	assert_rgb_near(render_pixel(pixels, pw, 0, 0), [u8(20), 20, 26], 'kose')
 
 	// Adım 7: 120 adım * 1/120 sn = 1 sn, yeşil varlık vx=10 ile x≈10.
 	e2 := by_id[7]['result'] or { panic('entity.get sonucu yok') }.as_map()
