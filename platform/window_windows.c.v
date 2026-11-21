@@ -1,0 +1,241 @@
+module platform
+
+#flag -lgdi32 -luser32 -lopengl32
+#include <windows.h>
+#include <GL/gl.h>
+#include "@VMODROOT/platform/win_state.h"
+
+@[typedef]
+struct C.WNDCLASSEXW {
+mut:
+	cbSize        u32
+	style         u32
+	lpfnWndProc   voidptr
+	cbClsExtra    int
+	cbWndExtra    int
+	hInstance     voidptr
+	hIcon         voidptr
+	hCursor       voidptr
+	hbrBackground voidptr
+	lpszMenuName  &u16
+	lpszClassName &u16
+	hIconSm       voidptr
+}
+
+@[typedef]
+struct C.PIXELFORMATDESCRIPTOR {
+mut:
+	nSize        u16
+	nVersion     u16
+	dwFlags      u32
+	iPixelType   u8
+	cColorBits   u8
+	cDepthBits   u8
+	cStencilBits u8
+}
+
+@[typedef]
+struct C.POINT {
+mut:
+	x int
+	y int
+}
+
+// Alan adları windows.h ile aynı olmalı: V sıfır literalini bu adlarla üretir.
+@[typedef]
+struct C.MSG {
+mut:
+	hwnd    voidptr
+	message u32
+	wParam  usize
+	lParam  isize
+	time    u32
+	pt      C.POINT
+}
+
+type FnCreateCtx = fn (voidptr, voidptr, &int) voidptr
+
+fn C.GetModuleHandleW(name voidptr) voidptr
+fn C.RegisterClassExW(wc &C.WNDCLASSEXW) u16
+fn C.DefWindowProcW(hwnd voidptr, msg u32, wp usize, lp isize) isize
+fn C.CreateWindowExW(ex u32, cls &u16, title &u16, style u32, x int, y int, w int, h int, parent voidptr, menu voidptr, inst voidptr, param voidptr) voidptr
+fn C.AdjustWindowRect(rect &int, style u32, menu int) int
+fn C.ShowWindow(hwnd voidptr, cmd int) int
+fn C.DestroyWindow(hwnd voidptr) int
+fn C.GetClientRect(hwnd voidptr, rect &int) int
+fn C.GetDC(hwnd voidptr) voidptr
+fn C.ReleaseDC(hwnd voidptr, hdc voidptr) int
+fn C.ChoosePixelFormat(hdc voidptr, ppfd &C.PIXELFORMATDESCRIPTOR) int
+fn C.SetPixelFormat(hdc voidptr, format int, ppfd &C.PIXELFORMATDESCRIPTOR) int
+fn C.SwapBuffers(hdc voidptr) int
+fn C.PeekMessageW(msg &C.MSG, hwnd voidptr, min u32, max u32, remove u32) int
+fn C.TranslateMessage(msg &C.MSG) int
+fn C.DispatchMessageW(msg &C.MSG) isize
+fn C.wglCreateContext(hdc voidptr) voidptr
+fn C.wglMakeCurrent(hdc voidptr, ctx voidptr) int
+fn C.wglDeleteContext(ctx voidptr) int
+fn C.wglGetProcAddress(name &char) voidptr
+fn C.glGetString(name u32) &u8
+fn C.vcore_win_reset()
+fn C.vcore_win_mark_closed()
+fn C.vcore_win_closed() int
+
+const wm_close = 0x0010
+const cw_usedefault = -2147483648
+const ws_overlappedwindow = 0x00CF0000
+const class_name = 'VCorePlatformWindow'
+
+// Süreç başına bir pencere. Tutamaçlar nil ise ilgili kaynak yoktur; close her durumda güvenlidir.
+pub struct Window {
+mut:
+	hwnd  voidptr
+	hdc   voidptr
+	hglrc voidptr
+}
+
+// WNDPROC. WM_CLOSE pencereyi yok etmez; çağıran close() ile kapatır, poll bayrağı görür.
+fn wnd_proc(hwnd voidptr, msg u32, wp usize, lp isize) isize {
+	if msg == wm_close {
+		C.vcore_win_mark_closed()
+		return 0
+	}
+	return C.DefWindowProcW(hwnd, msg, wp, lp)
+}
+
+// Pencere, piksel formatı ve 3.3 core context. Hata durumunda kısmi kaynaklar serbest bırakılır.
+pub fn Window.new(cfg WindowConfig) !Window {
+	C.vcore_win_reset()
+	inst := C.GetModuleHandleW(unsafe { nil })
+	cls := class_name.to_wide()
+	// Sınıf zaten kayıtlıysa RegisterClassExW 0 döner; CreateWindowExW başarısızlığı bunu yakalar.
+	wc := C.WNDCLASSEXW{
+		cbSize:        u32(sizeof(C.WNDCLASSEXW))
+		style:         0x20 // CS_OWNDC
+		lpfnWndProc:   voidptr(wnd_proc)
+		hInstance:     inst
+		lpszClassName: cls
+	}
+	C.RegisterClassExW(&wc)
+
+	mut rc := [0, 0, cfg.width, cfg.height]!
+	C.AdjustWindowRect(&rc[0], ws_overlappedwindow, 0)
+	ow := rc[2] - rc[0]
+	oh := rc[3] - rc[1]
+	hwnd := C.CreateWindowExW(0, cls, cfg.title.to_wide(), ws_overlappedwindow, cw_usedefault,
+		cw_usedefault, ow, oh, unsafe { nil }, unsafe { nil }, inst, unsafe { nil })
+	mut w := Window{
+		hwnd: hwnd
+	}
+	if hwnd == unsafe { nil } {
+		return error('CreateWindowExW basarisiz')
+	}
+	w.hdc = C.GetDC(hwnd)
+
+	mut pfd := C.PIXELFORMATDESCRIPTOR{
+		nSize:      u16(sizeof(C.PIXELFORMATDESCRIPTOR))
+		nVersion:   1
+		dwFlags:    0x4 | 0x20 | 0x1 // DRAW_TO_WINDOW | SUPPORT_OPENGL | DOUBLEBUFFER
+		cColorBits: 32
+		cDepthBits: 24
+	}
+	pf := C.ChoosePixelFormat(w.hdc, &pfd)
+	if pf == 0 || C.SetPixelFormat(w.hdc, pf, &pfd) == 0 {
+		w.close()
+		return error('piksel formati ayarlanamadi')
+	}
+
+	// Core context için önce legacy context gerekir: wglCreateContextAttribsARB onun içinden yüklenir.
+	legacy := C.wglCreateContext(w.hdc)
+	if legacy == unsafe { nil } {
+		w.close()
+		return error('wglCreateContext basarisiz')
+	}
+	w.hglrc = legacy
+	if C.wglMakeCurrent(w.hdc, legacy) == 0 {
+		w.close()
+		return error('wglMakeCurrent basarisiz')
+	}
+	p := gl_proc(c'wglCreateContextAttribsARB')
+	if p == unsafe { nil } {
+		w.close()
+		return error('wglCreateContextAttribsARB yok')
+	}
+	create := unsafe { FnCreateCtx(p) }
+	attrs := [0x2091, 3, 0x2092, 3, 0x9126, 0x1, 0]!
+	core := create(w.hdc, unsafe { nil }, &attrs[0])
+	if core == unsafe { nil } {
+		w.close()
+		return error('3.3 core context olusturulamadi')
+	}
+	if C.wglMakeCurrent(w.hdc, core) == 0 {
+		C.wglDeleteContext(core)
+		w.close()
+		return error('core context current yapilamadi')
+	}
+	C.wglDeleteContext(legacy)
+	w.hglrc = core
+
+	if cfg.visible {
+		C.ShowWindow(hwnd, 5) // SW_SHOW
+	}
+	return w
+}
+
+// Context, DC ve pencereyi serbest bırakır. Tekrar çağrılabilir.
+pub fn (mut w Window) close() {
+	if w.hglrc != unsafe { nil } {
+		C.wglMakeCurrent(unsafe { nil }, unsafe { nil })
+		C.wglDeleteContext(w.hglrc)
+		w.hglrc = unsafe { nil }
+	}
+	if w.hdc != unsafe { nil } {
+		C.ReleaseDC(w.hwnd, w.hdc)
+		w.hdc = unsafe { nil }
+	}
+	if w.hwnd != unsafe { nil } {
+		C.DestroyWindow(w.hwnd)
+		w.hwnd = unsafe { nil }
+	}
+}
+
+// Bekleyen mesajları boşaltır. Kapanış isteği (WM_CLOSE veya WM_QUIT) görülürse false döner.
+pub fn (mut w Window) poll() bool {
+	mut msg := C.MSG{}
+	for C.PeekMessageW(&msg, unsafe { nil }, 0, 0, 0x0001) != 0 { // PM_REMOVE
+		if msg.message == 0x0012 { // WM_QUIT
+			C.vcore_win_mark_closed()
+		}
+		C.TranslateMessage(&msg)
+		C.DispatchMessageW(&msg)
+	}
+	return C.vcore_win_closed() == 0
+}
+
+pub fn (w &Window) swap() {
+	C.SwapBuffers(w.hdc)
+}
+
+// İstemci alanı boyutu (piksel).
+pub fn (w &Window) size() (int, int) {
+	mut rc := [0, 0, 0, 0]!
+	C.GetClientRect(w.hwnd, &rc[0])
+	return rc[2] - rc[0], rc[3] - rc[1]
+}
+
+pub fn (w &Window) gl_version() string {
+	p := C.glGetString(0x1F02) // GL_VERSION
+	if p == unsafe { nil } {
+		return ''
+	}
+	return unsafe { cstring_to_vstring(&char(p)) }
+}
+
+// wglGetProcAddress sarmalayıcısı. Windows'un döndürdüğü 0, 1, 2, 3 ve -1 hata değerleridir.
+pub fn gl_proc(name &char) voidptr {
+	p := C.wglGetProcAddress(name)
+	v := u64(p)
+	if v <= 3 || v == max_u64 {
+		return unsafe { nil }
+	}
+	return p
+}
