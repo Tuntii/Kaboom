@@ -1,6 +1,5 @@
 module protocol
 
-import x.json2
 import ecs
 
 // JSON-RPC 2.0 standart kodları.
@@ -24,13 +23,16 @@ pub const code_readonly_field = 1009
 pub const code_io_error = 1010
 pub const code_replay_diverged = 1011
 pub const code_invalid_command = 1012
+// Pencere yok (headless): ekran görüntüsü alınamaz.
+pub const code_no_renderer = 1013
 
 // Yapılandırılmış hata: ajan kendi hatasını düzeltebilsin diye kod, mesaj ve data taşır.
+// data bir nesne düğümüdür ve istek arenasında yaşar.
 pub struct RpcError {
 pub:
 	err_code int
 	message  string
-	data     map[string]json2.Any
+	data     Val
 }
 
 pub fn (e RpcError) msg() string {
@@ -42,7 +44,7 @@ pub fn (e RpcError) code() int {
 }
 
 // data her zaman bir hint içerir; ilgili entity, component ve field varsa onlar da eklenir.
-pub fn rpc_error(code int, message string, data map[string]json2.Any) RpcError {
+pub fn rpc_error(code int, message string, data Val) RpcError {
 	return RpcError{
 		err_code: code
 		message:  message
@@ -50,22 +52,23 @@ pub fn rpc_error(code int, message string, data map[string]json2.Any) RpcError {
 	}
 }
 
+// Yalnız hint alanı taşıyan data nesnesi.
+fn hint_data(hint string) Val {
+	o := obj()
+	o.set('hint', str_val(hint))
+	return o
+}
+
 fn invalid_request(hint string) RpcError {
-	return rpc_error(code_invalid_request, 'invalid request', {
-		'hint': json2.Any(hint)
-	})
+	return rpc_error(code_invalid_request, 'invalid request', hint_data(hint))
 }
 
 fn internal_error(hint string) RpcError {
-	return rpc_error(code_internal, 'internal error', {
-		'hint': json2.Any(hint)
-	})
+	return rpc_error(code_internal, 'internal error', hint_data(hint))
 }
 
 pub fn invalid_params(hint string) RpcError {
-	return rpc_error(code_invalid_params, 'invalid params', {
-		'hint': json2.Any(hint)
-	})
+	return rpc_error(code_invalid_params, 'invalid params', hint_data(hint))
 }
 
 // ecs.Status -> JSON-RPC kodu. ok bu yola gelmez; gelirse sunucu içi hata.
@@ -111,9 +114,8 @@ fn status_hint(st ecs.Status) string {
 	}
 }
 
-// ecs.Status hatası; refs entity/component/field bağlamını taşır.
-pub fn status_error(st ecs.Status, refs map[string]json2.Any) RpcError {
-	mut data := refs.clone()
-	data['hint'] = json2.Any(status_hint(st))
-	return rpc_error(status_code(st), st.str(), data)
+// ecs.Status hatası; refs entity/component/field bağlamını taşıyan nesnedir (hint buna eklenir).
+pub fn status_error(st ecs.Status, refs Val) RpcError {
+	refs.set('hint', str_val(status_hint(st)))
+	return rpc_error(status_code(st), st.str(), refs)
 }

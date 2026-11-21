@@ -78,7 +78,7 @@ fn test_alive_count_and_entities() {
 	assert w.alive_count() == 1
 	assert w.is_alive(e1) == false
 	assert w.entities().alive_count() == 1
-	assert w.store_count() == 2
+	assert w.store_count() == 3
 }
 
 // Kurulum başarısız olursa parent arena başlangıç imlecine dönmeli.

@@ -9,14 +9,6 @@ import memory
 // Sabit adım: 120 Hz. f32 sabiti; FMA ve f64 kullanılmaz.
 pub const dt = f32(1.0) / f32(120.0)
 
-// Transform ve Body alan sırası (ecs/core.v).
-const tr_x = u16(0)
-const tr_y = u16(1)
-const tr_prev_x = u16(2)
-const tr_prev_y = u16(3)
-const body_vx = u16(0)
-const body_vy = u16(1)
-
 pub struct Config {
 pub:
 	capacity        u32 = 100_000
@@ -58,10 +50,25 @@ pub mut:
 mut:
 	// Alan adı tick() metoduyla çakışmasın diye current_tick.
 	current_tick u64
+	// Alan indeksleri Sim.new'de registry'den çözülür; sabit koda gömülmez.
+	tr_x      u16
+	tr_y      u16
+	tr_prev_x u16
+	tr_prev_y u16
+	body_vx   u16
+	body_vy   u16
 }
 
-// Hata olursa parent başladığı konuma geri sarılır.
+// Hata olursa parent başladığı konuma geri sarılır. Transform ya da Body alanı registry'de yoksa none.
 pub fn Sim.new(mut parent memory.LinearArena, reg &ecs.Registry, cfg Config) ?Sim {
+	tr := reg.component(ecs.transform_id) or { return none }
+	body := reg.component(ecs.body_id) or { return none }
+	tr_x := tr.field_index('x') or { return none }
+	tr_y := tr.field_index('y') or { return none }
+	tr_prev_x := tr.field_index('prev_x') or { return none }
+	tr_prev_y := tr.field_index('prev_y') or { return none }
+	body_vx := body.field_index('vx') or { return none }
+	body_vy := body.field_index('vy') or { return none }
 	m := parent.mark()
 	world := ecs.World.new(mut parent, reg, cfg.capacity) or {
 		parent.rewind(m)
@@ -76,9 +83,15 @@ pub fn Sim.new(mut parent memory.LinearArena, reg &ecs.Registry, cfg Config) ?Si
 		return none
 	}
 	return Sim{
-		world:    world
-		queue:    queue
-		recorder: recorder
+		world:     world
+		queue:     queue
+		recorder:  recorder
+		tr_x:      tr_x
+		tr_y:      tr_y
+		tr_prev_x: tr_prev_x
+		tr_prev_y: tr_prev_y
+		body_vx:   body_vx
+		body_vy:   body_vy
 	}
 }
 
@@ -95,10 +108,10 @@ pub fn (mut s Sim) flush() u32 {
 pub fn (mut s Sim) step() {
 	s.flush()
 	tr := s.world.store(ecs.transform_id)
-	x := tr.column_f32(tr_x)
-	y := tr.column_f32(tr_y)
-	px := tr.column_f32(tr_prev_x)
-	py := tr.column_f32(tr_prev_y)
+	x := tr.column_f32(s.tr_x)
+	y := tr.column_f32(s.tr_y)
+	px := tr.column_f32(s.tr_prev_x)
+	py := tr.column_f32(s.tr_prev_y)
 	for row in 0 .. tr.len() {
 		unsafe {
 			px[row] = x[row]
@@ -107,8 +120,8 @@ pub fn (mut s Sim) step() {
 	}
 	// Body satırlarından Transform satırına: sparse-set üzerinden varlık eşlemesi.
 	body := s.world.store(ecs.body_id)
-	vx := body.column_f32(body_vx)
-	vy := body.column_f32(body_vy)
+	vx := body.column_f32(s.body_vx)
+	vy := body.column_f32(s.body_vy)
 	for row in 0 .. body.len() {
 		tr_row := tr.row_of(body.index_at(row)) or { continue }
 		unsafe {

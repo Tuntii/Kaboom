@@ -4,16 +4,26 @@ import os
 import protocol
 import sim
 
-const usage_text = 'kullanim: vcore headless [--capacity N]'
+const usage_text = 'kullanim: vcore headless [--capacity N]
+       vcore run [--capacity N] [--width W] [--height H] [--hidden] [--paused]'
 
-// Girdi: vcore headless [--capacity N]. stdin'den satır okur, her yanıtı tek satır yazar.
+// Girdi: vcore headless | vcore run. headless stdin'den satır okur, her yanıtı tek satır yazar.
+@[console]
 fn main() {
 	args := os.args[1..]
-	if args.len == 0 || args[0] != 'headless' {
+	if args.len == 0 {
 		usage()
 	}
+	match args[0] {
+		'headless' { run_headless(args[1..]) }
+		'run' { run_window(args[1..]) }
+		else { usage() }
+	}
+}
+
+fn run_headless(args []string) {
 	mut capacity := u32(100_000)
-	mut i := 1
+	mut i := 0
 	for i < args.len {
 		if args[i] == '--capacity' && i + 1 < args.len {
 			n := args[i + 1].parse_uint(10, 32) or { usage() }
@@ -44,6 +54,8 @@ fn main() {
 			println(resp)
 			flush_stdout()
 		}
+		// Yanıt satıra referans tutmaz (ayrıştırma kopyalar); satır her istekte serbest bırakılır.
+		unsafe { line.free() }
 	}
 }
 

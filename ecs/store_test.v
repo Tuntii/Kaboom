@@ -84,6 +84,15 @@ fn test_queries() {
 	assert !s.remove(7)
 }
 
+// Sınır dışı kolon adresi nil döner; tasmış bir indeks bellek okumaz.
+fn test_column_f32_out_of_range_is_nil() {
+	s := new_store(16)
+	assert isnil(s.column_f32(s.field_count()))
+	// max_fields dizinin dışı: guard olmadan dizi sınırı paniği olurdu.
+	assert isnil(s.column_f32(max_fields))
+	assert !isnil(s.column_f32(0))
+}
+
 fn test_columns_64_aligned() {
 	s := new_store(16)
 	assert u64(s.column_f32(0)) % 64 == 0
