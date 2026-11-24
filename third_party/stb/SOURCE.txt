@@ -1,0 +1,1 @@
+stb_truetype.h — https://github.com/nothings/stb, commit 6b5799bae8a1fe3792691ef4b72ae26434c3e799 (2026-11-24 itibarıyla master). Değiştirilmeden kopyalandı. Lisans: public domain / MIT (dosyanın sonu).
