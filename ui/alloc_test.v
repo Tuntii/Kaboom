@@ -150,3 +150,34 @@ fn test_showcase_editor_interactions_zero_alloc() {
 	assert run.editing, 'x alani duzenlemeye gecmedi'
 	assert run.tip, 'Oynat ipucu gosterilmedi'
 }
+
+// Sprite.r [0, 1] dışındaysa editör sayfasında hata satırı görünür; boşta bu karelerde de tahsis yok.
+fn test_showcase_number_error_zero_alloc() {
+	if !memory.heap_tracking_enabled() {
+		eprintln('atlandi: -d track_heap ile calistir')
+		return
+	}
+	atlas := Atlas.build(1.0) or { panic(err) }
+	mut c := Context.new(&atlas, 4096, 8192) or { panic(err) }
+	mut st := ShowcaseState.new()
+	st.r = 2
+	for k in 0 .. 5 {
+		c.begin(Input{ time_ms: f64(k) * 16 }, 1440, 900, 1.0)
+		showcase(mut c, mut st, .editor)
+		c.end()
+	}
+	before := memory.heap_alloc_count()
+	for k in 5 .. 65 {
+		c.begin(Input{ time_ms: f64(k) * 16 }, 1440, 900, 1.0)
+		showcase(mut c, mut st, .editor)
+		c.end()
+	}
+	assert memory.heap_alloc_count() - before == 0
+	mut hints := 0
+	for i in 0 .. c.n {
+		if c.nodes[i].kind == .text && c.nodes[i].text == showcase_r_err {
+			hints++
+		}
+	}
+	assert hints == 1, 'hata satiri sayisi: ${hints}'
+}

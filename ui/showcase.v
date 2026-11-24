@@ -76,6 +76,9 @@ pub fn showcase(mut c Context, mut st ShowcaseState, page ShowcasePage) Rect {
 	return Rect{}
 }
 
+// Sprite.r aralığının protokol hata metni (vitrinde hata satırı olarak gösterilir).
+const showcase_r_err = 'Sprite.r must be in [0, 1]'
+
 fn showcase_editor(mut c Context, mut st ShowcaseState) {
 	c.toolbar_begin()
 	if c.icon_button('Oynat', .play, st.playing) {
@@ -153,7 +156,15 @@ fn showcase_editor(mut c Context, mut st ShowcaseState) {
 	}
 	if c.section('sec_sprite', 'Sprite') {
 		prop_num(mut c, 'size', mut &st.size, 'm', 2, 0.1, 0.1, 50)
-		prop_num(mut c, 'r', mut &st.r, '', 2, 0.01, 0, 1)
+		// Aralık dışı değer hata satırıyla görünür (protokol aralığı uygular; vitrin yalnız gösterir).
+		r_err := if st.r < 0 || st.r > 1 { showcase_r_err } else { '' }
+		c.property_row_begin('r')
+		c.number_field_ex('r', mut &st.r, NumberFieldOpts{
+			decimals: 2
+			step:     f32(0.01)
+			error:    r_err
+		})
+		c.property_row_end()
 		prop_num(mut c, 'g', mut &st.g, '', 2, 0.01, 0, 1)
 		prop_num(mut c, 'b', mut &st.b, '', 2, 0.01, 0, 1)
 		c.checkbox('visible', mut &st.visible)

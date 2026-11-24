@@ -60,6 +60,7 @@ mut:
 	sel     int
 	open    bool
 	tip     bool
+	last    NumberFieldResult
 }
 
 fn in_fmt(v f32, dec int) string {
@@ -802,4 +803,247 @@ fn test_backspace_repeat_deletes_again() {
 	assert t.buf.str() == 'ab'
 	wgt_frame(mut c, in_key_rep(.backspace), body)
 	assert t.buf.str() == 'a'
+}
+
+// Tek geçiş: olaylar yalnızca bu karede işlenir (sürükleme olaylarının hangi karede geldiği ölçülebilsin).
+fn nf_once(mut c Context, inp Input, body fn (mut c Context)) {
+	c.begin(inp, 400, 300, 1.0)
+	body(mut c)
+	c.end()
+}
+
+fn nf_held(x f32, y f32) Input {
+	mut inp := mouse_at(x, y)
+	inp.down[0] = true
+	return inp
+}
+
+fn nf_text_nodes(c &Context, s string) int {
+	mut n := 0
+	for i in 0 .. c.n {
+		if c.nodes[i].kind == .text && c.nodes[i].text == s {
+			n++
+		}
+	}
+	return n
+}
+
+fn nf_glyphs_with(l &DrawList, col u32) int {
+	mut n := 0
+	for i in 0 .. l.len() {
+		cmd := l.at(i)
+		if cmd.kind == u32(DrawKind.glyph) && cmd.color == col {
+			n++
+		}
+	}
+	return n
+}
+
+fn nf_rects_with_border(l &DrawList, col u32) int {
+	mut n := 0
+	for i in 0 .. l.len() {
+		cmd := l.at(i)
+		if cmd.kind == u32(DrawKind.rect) && cmd.border_color == col {
+			n++
+		}
+	}
+	return n
+}
+
+// Sürükleme: eşik karesi drag_started (ve değer değişir), tutulan kare olay üretmez, bırakma drag_ended.
+fn test_number_field_drag_events() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{ step: 1 })
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, nf_held(20, 10), body)
+	assert t.last.drag_started
+	assert t.last.changed
+	assert t.value == 2.5
+	nf_once(mut c, nf_held(20, 10), body)
+	assert !t.last.drag_started
+	assert !t.last.changed
+	assert !t.last.drag_ended
+	nf_once(mut c, release_at(20, 10), body)
+	assert t.last.drag_ended
+	assert !t.last.drag_started
+	nf_once(mut c, Input{}, body)
+	assert !t.last.drag_ended
+	assert !t.last.drag_started
+	assert !t.last.changed
+	assert !t.last.drag_cancelled
+}
+
+// Sürükleme sırasında Esc: değer başlangıca döner, drag_cancelled bildirilir; bırakma drag_ended üretmez.
+fn test_number_field_drag_cancel_reports() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 5
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{ step: 1 })
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, nf_held(20, 10), body)
+	assert t.value == 7.5
+	mut esc := nf_held(20, 10)
+	esc.keys[0] = .escape
+	esc.key_count = 1
+	nf_once(mut c, esc, body)
+	assert t.last.drag_cancelled
+	assert !t.last.drag_ended
+	assert t.last.changed
+	assert t.value == 5
+	nf_once(mut c, release_at(20, 10), body)
+	assert !t.last.drag_ended
+	assert !t.last.drag_cancelled
+	assert c.num_id == 0
+	assert t.value == 5
+}
+
+// Tıkla-bırak sonrası "3" + Enter: committed ve changed birlikte bildirilir.
+fn test_number_field_typed_commit_reports() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id != 0
+	nf_once(mut c, in_text('3'), body)
+	assert !t.last.committed
+	nf_once(mut c, in_key(.enter), body)
+	assert t.last.committed
+	assert t.last.changed
+	assert t.value == 3
+	nf_once(mut c, Input{}, body)
+	assert !t.last.committed
+	assert !t.last.changed
+}
+
+// Salt okunur: tıklama, sürükleme ve yazma değeri değiştirmez, odak almaz, metin text_muted çizilir.
+fn test_number_field_readonly_ignores_input() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 4
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			readonly: true
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	assert c.focused_id() == 0
+	nf_once(mut c, nf_held(60, 10), body)
+	nf_once(mut c, release_at(60, 10), body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id == 0
+	nf_once(mut c, in_text('9'), body)
+	nf_once(mut c, in_key(.enter), body)
+	assert t.value == 4
+	assert !t.last.changed
+	assert !t.last.drag_started
+	assert !t.last.committed
+	assert nf_glyphs_with(c.list, u32(text_muted)) > 0
+	assert nf_glyphs_with(c.list, u32(text_primary)) == 0
+}
+
+// Hata: kenarlık danger, altında danger renkli hata metni (glifleri) bir satır olarak çizilir.
+fn test_number_field_error_draws_hint() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 2
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			error: 'Sprite.r must be in [0, 1]'
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, Input{}, body)
+	assert nf_rects_with_border(c.list, u32(danger)) > 0
+	assert nf_text_nodes(&c, 'Sprite.r must be in [0, 1]') == 1
+	assert nf_glyphs_with(c.list, u32(danger)) > 0
+}
+
+// Odaktaki alan dışarıdan değişirse düzenleme bitene kadar kullanıcının metni görünür; Esc sonrası yeni değer.
+fn test_number_field_external_change_while_editing() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 3
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			decimals: 0
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id != 0
+	t.value = 7
+	nf_once(mut c, Input{}, body)
+	assert c.num_id != 0
+	assert nf_text_nodes(&c, '3') == 1
+	assert nf_text_nodes(&c, '7') == 0
+	assert t.value == 7
+	nf_once(mut c, in_key(.escape), body)
+	assert c.num_id == 0
+	assert t.value == 7
+	nf_once(mut c, Input{}, body)
+	assert nf_text_nodes(&c, '7') == 1
+	assert nf_text_nodes(&c, '3') == 0
+}
+
+// Düzenleme modunda klavye yakalanır (sayı ve metin alanı); düzenleme bitince serbest.
+fn test_keyboard_captured_while_editing() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{})
+		c.text_field('alan', mut tp.buf, 120)
+	}
+	nf_once(mut c, Input{}, body)
+	assert !c.keyboard_captured()
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.keyboard_captured()
+	nf_once(mut c, in_key(.enter), body)
+	assert !c.keyboard_captured()
+	nf_once(mut c, in_key(.tab), body)
+	assert c.focused_id() == c.id('n')
+	nf_once(mut c, in_key(.tab), body)
+	assert c.focused_id() == c.id('alan')
+	nf_once(mut c, Input{}, body)
+	assert c.keyboard_captured()
 }

@@ -11,6 +11,10 @@ const off_target = 4
 const off_collapsed = 5
 const off_start = 8
 const off_open = 5 // menü açık (menü kimliği bölümle çakışmaz)
+// Sayı alanı (hover kullanmaz): sürükleme başlangıç değeri f32, sürükleniyor ve Esc ile iptal bayrakları.
+const off_num_v0 = 0
+const off_num_drag = 4
+const off_num_cancel = 5
 
 // Kalıcı durum: kimlikle anahtarlı; 2 kare görülmeyen girdi end()'de silinir.
 struct StateSlot {
@@ -598,6 +602,12 @@ fn (mut c Context) drop_stale() {
 	if c.txt_id != 0 && !c.seen_now(c.txt_id) {
 		c.txt_id = 0
 	}
+}
+
+// Metin ya da sayı alanı düzenleniyorken true: editör kısayolları bu karede atlanmalı.
+// Alanlar kendi karesinde çizilirken güncellenir; çağıran kareyi alan çizimlerinden sonra sorgulamalı.
+pub fn (c &Context) keyboard_captured() bool {
+	return c.txt_id != 0 || c.num_id != 0
 }
 
 // Önceki karenin dikdörtgeni imleci içeriyor mu.
