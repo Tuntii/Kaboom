@@ -873,3 +873,58 @@ fn test_spawn_seeds_prev() {
 	assert pick(tr, 'prev_x').f64() == 3
 	assert pick(tr, 'prev_y').f64() == 4
 }
+
+fn t_get_u32(data []u8, off int) u32 {
+	mut v := u32(0)
+	for b in 0 .. 4 {
+		v |= u32(data[off + b]) << u32(8 * b)
+	}
+	return v
+}
+
+fn t_get_u64(data []u8, off int) u64 {
+	mut v := u64(0)
+	for b in 0 .. 8 {
+		v |= u64(data[off + b]) << u64(8 * b)
+	}
+	return v
+}
+
+fn t_put_u32(mut data []u8, off int, v u32) {
+	for b in 0 .. 4 {
+		data[off + b] = u8(v >> u32(8 * b))
+	}
+}
+
+fn t_fnv32(body []u8) u32 {
+	mut h := u64(0xcbf29ce484222325)
+	for b in body {
+		h = (h ^ u64(b)) * u64(0x100000001b3)
+	}
+	return u32(h)
+}
+
+// Görüntünün şeması (Transform x alan boyutu) değiştirilip iki sağlama yeniden mühürlenir: 1010 beklenir.
+fn test_replay_rejects_snapshot_with_different_schema_as_1010() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_protocol_schema_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	_ = call(mut s, '{"jsonrpc":"2.0","id":1,"method":"record.start"}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":2,"method":"record.stop","params":{"path":"${path}"}}')
+	mut data := os.read_bytes(path) or { panic(err) }
+	// Kayıt: başlık 32, start_tick 32, snapshot_len 40, görüntü 48. Boş dünyada görüntü: başlık 36, store 0 alan sayısı 36, ilk alan boyutu 40.
+	snap := 48
+	snap_len := int(t_get_u64(data, 40))
+	assert t_get_u32(data, snap + 12) == 3
+	assert t_get_u32(data, snap + 40) == 4
+	data[snap + 40] = 9
+	t_put_u32(mut data, snap + 32, t_fnv32(data[snap + 36..snap + snap_len]))
+	t_put_u32(mut data, 12, t_fnv32(data[32..]))
+	os.write_file_array(path, data) or { panic(err) }
+	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":3,"method":"replay.run","params":{"path":"${path}"}}')) == 1010
+}

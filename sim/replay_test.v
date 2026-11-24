@@ -352,3 +352,41 @@ fn test_v1_recording_still_replays() {
 	assert res.end_tick == 4
 	assert res.hash == live.state_hash()
 }
+
+// Serbest listede nesli 0xFFFF olan slot: görüntü geri yüklenir, hash ve sonraki id aynıdır.
+fn test_snapshot_restore_with_free_slot_at_max_generation() {
+	reg := ecs.core_registry() or { panic('registry basarisiz') }
+	cfg := Config{
+		capacity:        8
+		queue_capacity:  64
+		record_capacity: 64
+	}
+	mut src, rs := new_replay_sim(&reg, cfg)
+	defer { memory.release(rs) }
+	mut dst, rd := new_replay_sim(&reg, cfg)
+	defer { memory.release(rd) }
+	for _ in 0 .. 0xFFFF {
+		e := src.world.spawn() or { panic('spawn none') }
+		assert src.world.despawn(e)
+	}
+	src.step()
+	dst.world.restore(src.world.snapshot()) or { panic(err) }
+	dst.set_tick(src.tick())
+	assert dst.state_hash() == src.state_hash()
+	ea := src.world.spawn() or { panic('spawn none') }
+	eb := dst.world.spawn() or { panic('spawn none') }
+	assert ea == ecs.make_entity(0, 0xFFFF)
+	assert ea == eb
+	assert dst.state_hash() == src.state_hash()
+}
+
+// Sim kapatılırken açık kayıt bırakılır.
+fn test_free_drops_open_recording() {
+	reg := ecs.core_registry() or { panic('registry basarisiz') }
+	mut s, r := new_replay_sim(&reg, Config{ capacity: 8, queue_capacity: 8, record_capacity: 8 })
+	defer { memory.release(r) }
+	s.start_recording()
+	assert s.recorder.is_active()
+	s.free()
+	assert !s.recorder.is_active()
+}

@@ -94,9 +94,13 @@ pub fn (mut w World) restore(data []u8) ! {
 	if snapshot_checksum(data[snapshot_header_size..]) != u32(get_le(data, 32, 4)) {
 		return error('world snapshot: sağlama uyuşmuyor')
 	}
-	// Varlık tablosu: canlılık bayrağı, sayaçlar ve serbest liste (her boş, emekli olmayan slot listede, bir kez).
+	// Varlık tablosu: canlılık bayrağı, serbest liste (bitküme) ve emekliler. Ölü slot ya listededir ya emekli;
+	// emekli olan slotun nesli max'tır, ama listedeki slot da max nesile ulaşmış olabilir (0xFFFF'te yıkılıp listede kalır).
+	mut on_list := []u64{len: int((fresh + 63) / 64)}
+	defer {
+		unsafe { on_list.free() }
+	}
 	mut live := u32(0)
-	mut gone := u32(0)
 	for idx in 0 .. fresh {
 		flag := data[snapshot_header_size + int(idx) * snapshot_slot_size + 6]
 		if flag > 1 {
@@ -104,29 +108,46 @@ pub fn (mut w World) restore(data []u8) ! {
 		}
 		if flag == 1 {
 			live++
-		} else if snapshot_gen(data, idx) == u64(max_generation) {
-			gone++
 		}
 	}
-	if live != alive || gone != retired {
-		return error('world snapshot: sayaçlar tabloyla uyuşmuyor')
+	if live != alive {
+		return error('world snapshot: canlı sayısı tabloyla uyuşmuyor')
 	}
 	mut steps := u32(0)
 	mut cur := free_head
 	for cur != null_index {
-		if cur >= fresh || steps >= fresh || snapshot_alive(data, cur) || snapshot_gen(data, cur) == u64(max_generation) {
+		if cur >= fresh || steps >= fresh || snapshot_alive(data, cur) || bit_set(on_list, cur) {
 			return error('world snapshot: serbest liste bozuk (indeks ${cur})')
 		}
+		bit_put(mut on_list, cur)
 		steps++
 		cur = u32(get_le(data, snapshot_header_size + int(cur) * snapshot_slot_size + 2, 4))
 	}
-	if steps != fresh - alive - retired {
-		return error('world snapshot: serbest liste boyu ${steps} beklenen ${fresh - alive - retired}')
+	mut gone := u32(0)
+	for idx in 0 .. fresh {
+		if snapshot_alive(data, idx) || bit_set(on_list, idx) {
+			continue
+		}
+		if snapshot_gen(data, idx) != u64(max_generation) {
+			return error('world snapshot: ölü slot ${idx} ne listede ne emekli')
+		}
+		gone++
+	}
+	if gone != retired {
+		return error('world snapshot: emekli sayısı tabloyla uyuşmuyor')
 	}
 	// Store bölümleri: şema, satır sınırları ve dense indeksleri (canlı olmalı) doğrulanır.
+	// Dense tekrarları: store başına bitküme (kapasite genişliğinde, tek ayırma). Tekrarlı satır bozuk görüntüdür.
+	mut dup := []u64{len: int((w.alloc.capacity + 63) / 64)}
+	defer {
+		unsafe { dup.free() }
+	}
 	mut off := snapshot_header_size + int(fresh) * snapshot_slot_size
 	for i in 0 .. w.stores.len {
 		s := &w.stores[i]
+		for k in 0 .. dup.len {
+			dup[k] = 0
+		}
 		if !snapshot_fits(data, off, 4) || get_le(data, off, 4) != u64(s.field_n) {
 			return error('world snapshot: store ${i} alan sayısı uyuşmuyor')
 		}
@@ -150,6 +171,10 @@ pub fn (mut w World) restore(data []u8) ! {
 			if idx >= fresh || !snapshot_alive(data, idx) {
 				return error('world snapshot: store ${i} satır ${row} canlı olmayan varlık ${idx}')
 			}
+			if bit_set(dup, idx) {
+				return error('world snapshot: store ${i} satır ${row} tekrarlı varlık ${idx}')
+			}
+			bit_put(mut dup, idx)
 		}
 		off += int(count) * 4
 		for f in 0 .. s.field_n {
@@ -231,6 +256,14 @@ fn snapshot_gen(data []u8, idx u32) u64 {
 
 fn snapshot_alive(data []u8, idx u32) bool {
 	return data[snapshot_header_size + int(idx) * snapshot_slot_size + 6] == 1
+}
+
+fn bit_set(bits []u64, idx u32) bool {
+	return (bits[idx / 64] & (u64(1) << u64(idx % 64))) != 0
+}
+
+fn bit_put(mut bits []u64, idx u32) {
+	bits[idx / 64] |= u64(1) << u64(idx % 64)
 }
 
 fn slot_alive(a &EntityAllocator, idx u32) bool {

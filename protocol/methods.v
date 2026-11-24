@@ -129,7 +129,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'replay.run'
 		params: '{"path": string}'
-		result: '{"end_tick", "hash"}'
+		result: '{"end_tick", "hash"}; kayıt görüntüsü şema uyumunu alan sayısı ve boyutlarıyla denetler, alan adlarıyla değil; uyuşmazlık io_error (1010)'
 	},
 	CommandDoc{
 		method: 'scene.save'
@@ -567,6 +567,10 @@ fn (s &Server) replay_run(p Val) !Val {
 	res := sim.replay(rec, &s.reg) or {
 		msg := err.msg()
 		// Yalnızca "replay diverged: " önekli hatalar kaydın ayrıştığını gösterir; diğerleri sunucu içi hatadır.
+		// Görüntü geri yüklenemedi: başka derlemeden ya da bozuk kayıt; yeniden kaydedilmeli (1010).
+		if msg.starts_with('replay snapshot rejected: ') {
+			return io_error(path, 'recording from an incompatible build or corrupted; record it again with record.start and record.stop')
+		}
 		if msg.starts_with('replay diverged: ') {
 			d := obj()
 			d.set('path', str_val(path))

@@ -38,7 +38,7 @@ pub fn replay(rec cmd.Recording, reg &ecs.Registry) !ReplayResult {
 	mut a := memory.LinearArena.new(region, need)
 	mut s := Sim.new(mut a, reg, cfg) or { return error('replay setup failed: Sim could not be created') }
 	if rec.snapshot.len > 0 {
-		s.world.restore(rec.snapshot) or { return error('replay setup failed: snapshot ${err.msg()}') }
+		s.world.restore(rec.snapshot) or { return error('replay snapshot rejected: ${err.msg()}') }
 	}
 	s.set_tick(rec.start_tick)
 

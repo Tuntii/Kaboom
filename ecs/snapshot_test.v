@@ -100,3 +100,49 @@ fn test_restore_rejects_truncated_and_corrupted_without_touching_world() {
 	assert restore_fails(mut dst, trailing)
 	assert dst.snapshot() == before
 }
+
+// 0xFFFF yıkım: slot nesil 0xFFFF ile serbest listede kalır, emekli değildir.
+fn cycled_world(reg &Registry, n int) World {
+	mut w := snapshot_world(reg, 8)
+	for _ in 0 .. n {
+		e := w.spawn() or { panic('spawn none') }
+		assert w.despawn(e)
+	}
+	return w
+}
+
+fn test_snapshot_roundtrip_with_free_slot_at_max_generation() {
+	reg := core_registry() or { panic('registry basarisiz') }
+	mut src := cycled_world(&reg, 0xFFFF)
+	assert src.entities().retired_count() == 0
+	data := src.snapshot()
+	mut dst := snapshot_world(&reg, 8)
+	dst.restore(data) or { panic(err) }
+	assert dst.snapshot() == data
+	a := src.spawn() or { panic('spawn none') }
+	b := dst.spawn() or { panic('spawn none') }
+	assert a == make_entity(0, 0xFFFF)
+	assert a == b
+}
+
+// Dense listesinde tekrarlı satır: sağlama yeniden mühürlenir, yine de reddedilir.
+fn test_restore_rejects_duplicate_dense_row() {
+	reg := core_registry() or { panic('registry basarisiz') }
+	mut src := snapshot_world(&reg, 8)
+	e0 := src.spawn() or { panic('spawn none') }
+	e1 := src.spawn() or { panic('spawn none') }
+	assert src.add_component(e0, transform_id) == .ok
+	assert src.add_component(e1, transform_id) == .ok
+	mut data := src.snapshot()
+	// Başlık 36 + 2 slot × 7 = 50; store 0: alan sayısı 4 + 4 boyut × 4 = 70'te satır sayısı; dense satır 0 = 74, satır 1 = 78.
+	assert get_le(data, 70, 4) == 2
+	assert data[74] == 0 && data[78] == 1
+	for k in 0 .. 4 {
+		data[78 + k] = data[74 + k]
+	}
+	put_le(mut data, 32, u64(snapshot_checksum(data[snapshot_header_size..])), 4)
+	mut dst := snapshot_world(&reg, 8)
+	before := dst.snapshot()
+	assert restore_fails(mut dst, data)
+	assert dst.snapshot() == before
+}
