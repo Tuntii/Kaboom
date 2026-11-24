@@ -54,4 +54,6 @@ fn test_tick_has_zero_heap_allocs() {
 		s.step()
 	}
 	assert memory.heap_alloc_count() == before
+	// Geçmiş gerçekten yakalıyor olmalı; aksi halde sıfır tahsis kanıtı geçmişi kapsamaz.
+	assert s.history.undo_len() > 0
 }
