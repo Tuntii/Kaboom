@@ -229,6 +229,9 @@ fn test_empty_stack_is_not_an_error() {
 	assert !hpick(r, 'applied').as_bool()
 	assert hpick(r, 'commands').f64() == 0
 	assert hpick(r, 'failed').f64() == 0
+	// Boş yığın ile reddi ayırt etmek için neden alanı: yalnız reddedildiğinde döner.
+	assert hpick(r, 'reason').str() == 'empty'
+	assert hpick(r, 'applied').as_bool() == false
 }
 
 fn test_undo_redo_recorded_and_replay_matches() {
@@ -380,7 +383,11 @@ fn test_undo_refused_while_editor_group_open() {
 	e := spawn_at(mut s, 0)
 	set_x(mut s, e, 1, .agent)
 	s.history_begin_group()
-	assert !hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	refused := history_op(mut s, 'history.undo')
+	assert !hpick(refused, 'applied').as_bool()
+	assert hpick(refused, 'reason').str() == 'editor_group_open'
+	// Yineleme de aynı nedenle reddedilir; yığın boş olmadığı için "empty" değildir.
+	assert hpick(history_op(mut s, 'history.redo'), 'reason').str() == 'editor_group_open'
 	assert s.engine.history.undo_len() == 2
 	assert s.engine.history.redo_len() == 0
 	assert tr_x(mut s, e) == 1
@@ -389,7 +396,10 @@ fn test_undo_refused_while_editor_group_open() {
 	assert s.engine.history.undo_len() == 2
 	s.history_end_group()
 	// Grup kapandı: önce editörün yazımı geri alınır (x = 1), sonra agent yazımı.
-	assert hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	ok := history_op(mut s, 'history.undo')
+	assert hpick(ok, 'applied').as_bool()
+	// Uygulanan geri alma neden taşımaz.
+	assert hpick(ok, 'reason').str() == ''
 	assert tr_x(mut s, e) == 1
 }
 

@@ -23,11 +23,11 @@ pub fn (mut s Server) history_redo() !Val {
 fn (mut s Server) history_run(undo bool) !Val {
 	// Açık editör grubunun içinde geri alma tanımsızdır: yığınlara dokunmadan reddedilir.
 	if s.editor_depth > 0 {
-		return history_result(false, 0, 0, []IdPair{})
+		return history_refused('editor_group_open')
 	}
 	popped := if undo { s.engine.history.pop_undo() } else { s.engine.history.pop_redo() }
 	// Yığın boşsa hata değil: applied false.
-	view := popped or { return history_result(false, 0, 0, []IdPair{}) }
+	view := popped or { return history_refused('empty') }
 	// Kopya önce alınır: ters işlemin yakalaması halkanın üzerine yazar. Komutlar isteği yapanın kaynağını taşır.
 	mut blocks := copy_blocks(view, s.source)
 	defer {
@@ -151,6 +151,13 @@ fn copy_blocks(view cmd.GroupView, src cmd.Source) [][]cmd.Command {
 		}
 		out << dst
 	}
+	return out
+}
+
+// Reddedilen geri alma/yineleme: uygulanmadı, neden alanı çağırana ne olduğunu söyler ("empty" ya da "editor_group_open").
+fn history_refused(reason string) Val {
+	out := history_result(false, 0, 0, []IdPair{})
+	out.set('reason', str_val(reason))
 	return out
 }
 
