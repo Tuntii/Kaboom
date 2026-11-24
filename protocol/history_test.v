@@ -477,3 +477,45 @@ fn test_sim_reset_clears_open_editor_group() {
 	assert hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
 	assert tr_x(mut s, f) == 3
 }
+
+// İptal handle_from dışında çağrılır (s.source varsayılan agent); kayıtta yine editör olarak görünmeli (R4).
+fn test_cancel_records_editor_source() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_hist_cancel_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	_ = hcall(mut s, rq(1, '"method":"record.start"'))
+	e := spawn_at(mut s, 0)
+	s.history_begin_group()
+	set_x(mut s, e, 2, .editor)
+	s.history_cancel_group() or { panic(err) }
+	_ = hcall(mut s, rq(2, '"method":"record.stop","params":{"path":"${path}"}'))
+	rec := cmd.load_recording(path) or { panic(err) }
+	n := rec.entries.len
+	// Son kayıt iptalin ters yazımı (editör); ondan önce ileri editör yazımı.
+	assert rec.entries[n - 1].cmd.source == .editor
+	assert rec.entries[n - 1].cmd.kind == .set_field
+	assert rec.entries[n - 2].cmd.source == .editor
+	assert tr_x(mut s, e) == 0
+}
+
+// Açık editör grubu yokken end çağrısı motor grubuna dokunmaz: istek grubu erken kapanmaz.
+fn test_unbalanced_end_group_keeps_request_group_open() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	e := spawn_at(mut s, 0)
+	// Dış katman (istek grubu gibi) açık; editör derinliği 0.
+	s.engine.history.begin_group()
+	set_x(mut s, e, 4, .agent)
+	s.history_end_group()
+	assert s.engine.history.undo_len() == 1
+	assert s.engine.history.staged().block_count() == 1
+	s.engine.history.end_group()
+	assert s.engine.history.undo_len() == 2
+}

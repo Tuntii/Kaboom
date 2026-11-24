@@ -46,11 +46,12 @@ pub fn (mut s Server) history_begin_group() {
 	s.engine.history.begin_group()
 }
 
-// Derinlik sıfırda kalır: fazla end çağrısı sayacı eksiye düşürmez.
+// Açık editör grubu yoksa hiçbir şey yapma: dengesiz end, bir isteğin grubunu erken kapatmasın.
 pub fn (mut s Server) history_end_group() {
-	if s.editor_depth > 0 {
-		s.editor_depth--
+	if s.editor_depth == 0 {
+		return
 	}
+	s.editor_depth--
 	s.engine.history.end_group()
 }
 
@@ -62,8 +63,8 @@ pub fn (mut s Server) history_cancel_group() ! {
 		return error('history: open group overflowed the staging area; nothing was undone, end the group normally')
 	}
 	view := s.engine.history.staged()
-	// Komutlar iptali isteyenin kaynağını taşır (R3); iptal sonrası derinlik sıfırdır.
-	mut blocks := copy_blocks(view, s.source)
+	// Editör API'leri yalnız editörden çağrılır (R4): iptal, handle_from dışında çağrıldığı için s.source (varsayılan agent) değil .editor etiketler.
+	mut blocks := copy_blocks(view, .editor)
 	s.engine.history.abandon_group()
 	s.editor_depth = 0
 	s.engine.history.set_mode(.off)
