@@ -1,5 +1,7 @@
 module image
 
+import winfile
+
 // Bağımlılıksız PNG yazıcı: RGBA8, stored (sıkıştırmasız) deflate blokları. Çıktı bayt düzeyinde deterministik.
 
 // crc32 CRC-32 (IEEE 802.3, yansıtılmış polinom 0xEDB88320). Chunk ve IEND için kullanılır.
@@ -118,35 +120,7 @@ pub fn write_png(path string, width int, height int, rgba []u8, flip_y bool) ! {
 	defer {
 		unsafe { png.free() }
 	}
-	write_bytes(path, png)!
-}
-
-fn C._wfopen(filename &u16, mode &u16) voidptr
-fn C.MultiByteToWideChar(cp u32, flags u32, src &char, srclen int, dst &u16, dstlen int) int
-fn C.fwrite(ptr voidptr, size usize, n usize, stream voidptr) usize
-fn C.fclose(stream voidptr) int
-
-// Dosyayı UTF-16 yolla açıp yazar. os.write_file_array her çağrıda iki geniş metni serbest bırakmadan
-// ayırır (vfopen -> to_wide); bu yol yığın tamponu kullanır ve sızdırmaz.
-fn write_bytes(path string, data []u8) ! {
-	mut wpath := [1024]u16{}
-	// CP_UTF8 = 65001; kapasite bir NUL için ayrılır, dizinin kalanı sıfırdır.
-	n := C.MultiByteToWideChar(65001, 0, &char(path.str), path.len, &wpath[0], 1023)
-	if n <= 0 {
-		return error('yol UTF-16e çevrilemedi')
-	}
-	mut wmode := [3]u16{}
-	wmode[0] = u16(`w`)
-	wmode[1] = u16(`b`)
-	f := C._wfopen(&wpath[0], &wmode[0])
-	if f == unsafe { nil } {
-		return error('dosya açılamadı')
-	}
-	written := C.fwrite(data.data, 1, usize(data.len), f)
-	C.fclose(f)
-	if written != usize(data.len) {
-		return error('dosya yazılamadı')
-	}
+	winfile.write_file(path, png)!
 }
 
 fn put_u32_be(mut out []u8, v u32) {

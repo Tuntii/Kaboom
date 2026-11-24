@@ -26,12 +26,17 @@ fn test_f32_text_cases() {
 	assert f32_text(f32(100)) == '100'
 	neg_zero := math.f32_from_bits(u32(0x80000000))
 	assert f32_text(neg_zero) == '-0'
+	// Kural R5: |v| < 1e7 tamsayısı düz yazılır; diğerleri en kısa %g metni.
+	assert f32_text(f32(9999999)) == '9999999'
+	assert f32_text(f32(1e7)) == '1e+07'
 	max := f32(3.4028235e38)
+	assert f32_text(max) == '3.4028235e+38'
 	assert round_trips(max, f32_text(max))
 	denorm := math.f32_from_bits(u32(1))
 	assert round_trips(denorm, f32_text(denorm))
 	third := f32(1.0) / f32(3.0)
 	third_text := f32_text(third)
+	assert third_text == '0.33333334'
 	assert round_trips(third, third_text)
 	assert third_text.replace('-', '').replace('.', '').trim_left('0').len <= 9
 	assert f32_text(f32(math.nan())) == 'nan'

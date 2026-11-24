@@ -3,17 +3,14 @@ module protocol
 import math
 import strings
 import ecs
+import winfile
 
-// Kısa f32 metni için C kütüphane fonksiyonları: snprintf ve strtof std sınıfıdır, V sarmalayıcısı yoktur.
+// strtof std sınıfıdır, V sarmalayıcısı yoktur.
 fn C.strtof(s &char, endp voidptr) f32
-fn C._wfopen(filename &u16, mode &u16) voidptr
-fn C.MultiByteToWideChar(cp u32, flags u32, src &char, srclen int, dst &u16, dstlen int) int
-fn C.fwrite(ptr voidptr, size usize, n usize, stream voidptr) usize
-fn C.fclose(stream voidptr) int
-fn C.MoveFileExW(existing &u16, new &u16, flags u32) bool
-fn C.DeleteFileW(name &u16) bool
 
-// En kısa geri-dönüşlü ondalık metni (p = 1..9 anlamlı basamak). Sonsuz ve NaN JSON'da olmadığı için metin olarak döner.
+// En kısa geri-dönüşlü f32 metni. Kural: |v| < 1e7 ve tamsayı ise tam sayı olarak (100, 9999999);
+// aksi halde p = 1..9 için %.*g denenir ve strtof ile bit-eşit geri okunan ilk p kullanılır
+// (1/3 → 0.33333334, 1e7 → 1e+07). Sonsuz ve NaN JSON'da olmadığı için metin olarak döner (inf, -inf, nan).
 pub fn f32_text(v f32) string {
 	x := f64(v)
 	if v != v {
@@ -28,7 +25,7 @@ pub fn f32_text(v f32) string {
 	if math.f32_bits(v) == 0x80000000 {
 		return '-0'
 	}
-	// Küçük tamsayılar sabit noktada yazılır: %g 100'ü "1e+02" diye yazar, bu da bir tamsayı için okunaksızdır.
+	// Tamsayılar sabit noktada yazılır: %g 100'ü "1e+02" diye yazar, bu da bir tamsayı için okunaksızdır.
 	if x == math.floor(x) && math.abs(x) < 1e7 {
 		return '${i64(x)}'
 	}
@@ -80,7 +77,11 @@ pub fn scene_text(w &ecs.World, reg &ecs.Registry) string {
 			if !w.has(e, id) {
 				continue
 			}
-			schema := reg.component(id) or { continue }
+			// Kayıt id'leri 0..count arasındadır: eksik bileşen ya da değer bir iç hatadır, sessizce atlanmaz.
+			schema := reg.component(id) or {
+				assert false, 'registry has no component ${id} (entity ${u64(e)})'
+				return ''
+			}
 			assert scene_ident(schema.name)
 			if !first_comp {
 				b.write_u8(`,`)
@@ -89,11 +90,15 @@ pub fn scene_text(w &ecs.World, reg &ecs.Registry) string {
 			b.write_string('"${schema.name}":{')
 			mut first_field := true
 			for fi, f in schema.fields {
-				if f.readonly || f.typ != .f32_ {
+				if f.readonly {
 					continue
 				}
+				assert f.typ == .f32_, 'non-f32 field ${schema.name}.${f.name} not supported by .vscene v1'
 				assert scene_ident(f.name)
-				bits := w.get_field(e, id, u16(fi)) or { continue }
+				bits := w.get_field(e, id, u16(fi)) or {
+					assert false, 'entity ${u64(e)} has no value for ${schema.name}.${f.name}'
+					return ''
+				}
 				if !first_field {
 					b.write_u8(`,`)
 				}
@@ -117,40 +122,10 @@ pub fn scene_text(w &ecs.World, reg &ecs.Registry) string {
 	return b.str()
 }
 
-// Dosyayı UTF-16 yolla açıp yazar (image/png.v'deki desen). Başarısızlıkta hata döner; çağıran tmp'yi siler.
-fn write_wide_file(wpath &u16, data string) ! {
-	mut wmode := [3]u16{}
-	wmode[0] = u16(`w`)
-	wmode[1] = u16(`b`)
-	f := C._wfopen(wpath, &wmode[0])
-	if f == unsafe { nil } {
-		return error('dosya açılamadı')
-	}
-	written := C.fwrite(data.str, 1, usize(data.len), f)
-	C.fclose(f)
-	if written != usize(data.len) {
-		return error('dosya yazılamadı')
-	}
-}
-
-// Atomik yazım: önce <path>.tmp, sonra MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ile yerine taşınır.
-// Her başarısızlıkta tmp silinir; var olan path bu noktaya kadar dokunulmaz.
+// Atomik yazım: önce <path>.tmp (yazılamazsa winfile tmp'yi siler), sonra yerine taşınır.
+// Taşıma başarısızsa tmp silinir; var olan path bu noktaya kadar dokunulmaz.
 fn save_scene_atomic(path string, text string) ! {
 	tmp := path + '.tmp'
-	mut wtmp := [1024]u16{}
-	mut wpath := [1024]u16{}
-	n_tmp := C.MultiByteToWideChar(65001, 0, &char(tmp.str), tmp.len, &wtmp[0], 1023)
-	n_path := C.MultiByteToWideChar(65001, 0, &char(path.str), path.len, &wpath[0], 1023)
-	if n_tmp <= 0 || n_path <= 0 {
-		return error('yol UTF-16e çevrilemedi')
-	}
-	write_wide_file(&wtmp[0], text) or {
-		C.DeleteFileW(&wtmp[0])
-		return error('geçici dosya yazılamadı')
-	}
-	// MOVEFILE_REPLACE_EXISTING 0x1, MOVEFILE_WRITE_THROUGH 0x8.
-	if !C.MoveFileExW(&wtmp[0], &wpath[0], 0x9) {
-		C.DeleteFileW(&wtmp[0])
-		return error('dosya yerine taşınamadı')
-	}
+	winfile.write_file(tmp, text.bytes())!
+	winfile.replace_file(tmp, path)!
 }
