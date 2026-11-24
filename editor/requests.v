@@ -18,16 +18,36 @@ mut:
 	n      int
 	count  int
 	failed bool
+	depth  int
+	saved  [8]int // iç nesnelerin dış düzey sayaçları (obj_begin/obj_end)
 }
 
 // Yeni istek: {"jsonrpc":"2.0","id":1,"method":"<m>","params":{...}}. Sayılar ve id protokolün kabul ettiği biçimdedir.
 pub fn (mut r ReqBuf) begin(method string) {
 	r.n = 0
 	r.count = 0
+	r.depth = 0
 	r.failed = false
 	r.put('{"jsonrpc":"2.0","id":1,"method":"')
 	r.put(method)
 	r.put('","params":{')
+}
+
+// İç nesne: "key":{ ... }; obj_end dış düzeye döner. En fazla 8 düzey (saved); daha derin çağrı yoktur.
+pub fn (mut r ReqBuf) obj_begin(key string) {
+	r.sep()
+	r.put('"')
+	r.put(key)
+	r.put('":{')
+	r.saved[r.depth] = r.count
+	r.depth++
+	r.count = 0
+}
+
+pub fn (mut r ReqBuf) obj_end() {
+	r.put_byte(`}`)
+	r.depth--
+	r.count = r.saved[r.depth]
 }
 
 pub fn (mut r ReqBuf) param_int(key string, v int) {

@@ -29,6 +29,7 @@ mut:
 	right_w    f32
 	cam        EditorCamera
 	sv         SceneState
+	hier       Hierarchy
 	path       ui.TextBuf
 	started    bool
 	timed      bool
@@ -120,13 +121,14 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 		} else {
 			e.set_error('sahne alanları çözülemedi: Transform/Sprite kayıtlı değil')
 		}
+		e.hier.init(srv.registry())
 		if e.path.len > 0 {
 			e.load_scene(mut srv)
 		}
 	}
 	e.measure(c.input().time_ms)
 	e.toolbar(mut c, mut srv)
-	e.body(mut c)
+	e.body(mut c, mut srv)
 	// Sahne görünümü: önceki karenin sahne dikdörtgeni (düzen bir kare geriden; ilk karede sıfır, işlem yok).
 	scene := c.prev_rect(c.id('scene')) or { ui.Rect{} }
 	e.scene_view(mut c, mut srv, scene)
@@ -195,7 +197,7 @@ fn (e &Editor) file_label() string {
 }
 
 // Gövde: sol panel, sahne alanı ve sağ panel; ayırıcılar genişlikleri değiştirir.
-fn (mut e Editor) body(mut c ui.Context) {
+fn (mut e Editor) body(mut c ui.Context, mut srv protocol.Server) {
 	c.open('body', ui.Box{
 		dir:    .row
 		width:  ui.grow()
@@ -216,7 +218,13 @@ fn (mut e Editor) body(mut c ui.Context) {
 		align_cross: .center
 	})
 	c.text('Hiyerarşi', .body_strong, ui.text_primary)
+	c.spacer()
+	if c.icon_button('Ekle', .plus, false) {
+		e.spawn_at_camera(mut srv)
+	}
+	c.tooltip('Kameranın ortasında yeni varlık')
 	c.close()
+	e.hier_list(mut c, mut srv)
 	c.close()
 	c.splitter('split_l', mut &e.left_w, 160, 420, true)
 
