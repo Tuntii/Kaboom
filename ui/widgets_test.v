@@ -788,3 +788,27 @@ fn test_begin_scale_matches_atlas_ok() {
 	assert c.node_overflow() == 0
 	assert c.n > 1
 }
+
+// Devre dışı ikon düğmesi tıklanmaz; etkin olan normal tıklanır.
+fn test_icon_button_ex_disabled_never_clicks() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := Tally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.icon_button_ex('geri', .undo, false, false) {
+			tp.off++
+		}
+		if c.icon_button_ex('ileri', .redo, false, true) {
+			tp.ok++
+		}
+	}
+	wgt_frame(mut c, mouse_at(5, 5), body)
+	wgt_frame(mut c, press_at(5, 5), body)
+	wgt_frame(mut c, release_at(5, 5), body)
+	assert t.off == 0
+	wgt_frame(mut c, mouse_at(5, 40), body)
+	wgt_frame(mut c, press_at(5, 40), body)
+	wgt_frame(mut c, release_at(5, 40), body)
+	assert t.ok == 1
+}

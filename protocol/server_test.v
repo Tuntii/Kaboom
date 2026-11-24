@@ -928,3 +928,24 @@ fn test_replay_rejects_snapshot_with_different_schema_as_1010() {
 	os.write_file_array(path, data) or { panic(err) }
 	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":3,"method":"replay.run","params":{"path":"${path}"}}')) == 1010
 }
+
+// Editör ve düzen için sunucu sayaçları: change_count yalnız dünya değişince artar (sim.step artırmaz).
+fn test_change_count_tick_and_history_lens() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	assert s.change_count() == 0
+	call(mut s, '{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}')
+	spawned := s.change_count()
+	assert spawned > 0
+	call(mut s, '{"jsonrpc":"2.0","id":2,"method":"sim.step","params":{"n":3}}')
+	assert s.tick() == 3
+	assert s.change_count() == spawned, 'sim.step dünya değişikliği sayılmaz'
+	undo, redo := s.history_lens()
+	assert undo == 1 && redo == 0
+	call(mut s, '{"jsonrpc":"2.0","id":3,"method":"history.undo"}')
+	assert s.change_count() > spawned
+	undo2, redo2 := s.history_lens()
+	assert undo2 == 0 && redo2 == 1
+}

@@ -490,6 +490,7 @@ fn (mut s Server) sim_reset() !Val {
 	s.engine = engine
 	// Yeni motorun geçmişi boş ve derinliği 0: açık editör grubu da artık yok.
 	s.editor_depth = 0
+	s.changes++
 	return empty_object()
 }
 
@@ -887,6 +888,7 @@ fn (mut s Server) commit(cmds []cmd.Command) ! {
 		if r.status != .ok {
 			return s.cmd_error(r.status, c)
 		}
+		s.changes++
 	}
 }
 
@@ -903,6 +905,7 @@ fn (mut s Server) commit_one(c cmd.Command) ! {
 	if r.status != .ok {
 		return s.cmd_error(r.status, c)
 	}
+	s.changes++
 }
 
 // Komut hatasını entity, component ve field bağlamıyla kodlar.

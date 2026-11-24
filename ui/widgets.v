@@ -60,9 +60,14 @@ pub fn (mut c Context) button_ex(label string, kind ButtonKind, enabled bool) bo
 }
 
 pub fn (mut c Context) icon_button(label string, i Icon, active bool) bool {
+	return c.icon_button_ex(label, i, active, true)
+}
+
+// Devre dışı ikon düğmesi: tıklanmaz, simge text_muted çizilir (button_ex ile aynı kural).
+pub fn (mut c Context) icon_button_ex(label string, i Icon, active bool, enabled bool) bool {
 	id := c.id(label)
-	it := c.interact(id, true)
-	t := c.hover_t(id, it.hovered)
+	it := c.interact(id, enabled)
+	t := c.hover_t(id, enabled && it.hovered)
 	bg := if active { surface_2 } else { mix(surface_hover.with_alpha(0), surface_hover, t) }
 	c.open(label, Box{
 		width:       fixed(control_h)
@@ -72,9 +77,15 @@ pub fn (mut c Context) icon_button(label string, i Icon, active bool) bool {
 		bg:          bg
 		radius:      radius_control
 	})
-	c.icon(i, if active { text_primary } else { text_secondary })
+	c.icon(i, if !enabled {
+		text_muted
+	} else if active {
+		text_primary
+	} else {
+		text_secondary
+	})
 	c.close()
-	return it.clicked
+	return enabled && it.clicked
 }
 
 // value bool parametresi V'de mut olamaz; çağıran &bool verir.

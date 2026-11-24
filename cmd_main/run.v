@@ -85,6 +85,29 @@ fn read_stdin(ch chan string) {
 	ch.close()
 }
 
+// Kanalı bekletmeden boşaltır; her yanıt hemen yazılır. Dönüş: EOF görüldüyse true.
+// Ajan kaynağıdır (srv.handle); editör de aynı kanalı kullanır.
+fn drain_agent(ch chan string, mut srv protocol.Server) bool {
+	for {
+		mut line := ''
+		st := ch.try_pop(mut line)
+		if st == .closed {
+			return true
+		}
+		if st != .success {
+			return false
+		}
+		if resp := srv.handle(line) {
+			println(resp)
+			flush_stdout()
+		}
+		// Yanıt satıra referans tutmaz; satır her istekte serbest bırakılır.
+		unsafe { line.free() }
+	}
+	// V sonsuz döngüden sonra dönüş ister; bu satıra ulaşılmaz.
+	return false
+}
+
 // Ekran görüntüsü: mevcut kareyi yeniden çizer, okur ve PNG olarak yazar. Tick dışında çalışır.
 fn capture_frame(path string) !(int, int) {
 	mut c := unsafe { &RunCtx(C.vcore_run_get()) }
@@ -172,23 +195,8 @@ fn run_window(args []string) {
 	mut acc := u64(0)
 	mut eof := false
 	for {
-		// Kanalı bekletmeden boşalt; her yanıt hemen yazılır.
-		for {
-			mut line := ''
-			st := ch.try_pop(mut line)
-			if st == .closed {
-				eof = true
-				break
-			}
-			if st != .success {
-				break
-			}
-			if resp := srv.handle(line) {
-				println(resp)
-				flush_stdout()
-			}
-			// Yanıt satıra referans tutmaz; satır her istekte serbest bırakılır.
-			unsafe { line.free() }
+		if drain_agent(ch, mut srv) {
+			eof = true
 		}
 		if !win.poll() {
 			break

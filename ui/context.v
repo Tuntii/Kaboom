@@ -666,6 +666,11 @@ pub fn (c &Context) keyboard_captured() bool {
 	return c.txt_id != 0 || c.num_id != 0
 }
 
+// Kısayol: k bu karede basıldı ve klavye bir alanda değil. Çağıran kısayolu alanları çizdikten sonra sorgulamalı.
+pub fn (c &Context) shortcut(k Key) bool {
+	return !c.keyboard_captured() && c.key_pressed(k)
+}
+
 // Önceki karenin dikdörtgeni imleci içeriyor mu.
 fn (c &Context) hovered_prev(id u32) bool {
 	r := c.prev_rect(id) or { return false }

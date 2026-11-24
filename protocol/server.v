@@ -67,6 +67,8 @@ mut:
 	editor_depth u32
 	// Ekran görüntüsü kancası: yalnız pencere varken (vcore run) kurulur.
 	capture ?fn (path string) !(int, int)
+	// Dünya değişiklik sayacı: başarıyla uygulanan her komutta, geri al/yinelede ve sim.reset'te artar.
+	changes u64
 }
 
 // Bölgeyi cfg.bytes_needed kadar rezerve eder, istek arenasını ayırır ve Sim'i kurar.
@@ -129,6 +131,21 @@ pub fn (s &Server) registry() &ecs.Registry {
 
 pub fn (s &Server) paused() bool {
 	return s.is_paused
+}
+
+// Simülasyon tick'i (sim.step ve akış ilerlemesiyle artar).
+pub fn (s &Server) tick() u64 {
+	return s.engine.tick()
+}
+
+// Kaydedilmemiş değişiklik tespiti için: değişmediyse dünya aynıdır.
+pub fn (s &Server) change_count() u64 {
+	return s.changes
+}
+
+// Geri al ve yineleme yığınlarının grup sayıları (buton etkinliği için).
+pub fn (s &Server) history_lens() (int, int) {
+	return s.engine.history.undo_len(), s.engine.history.redo_len()
 }
 
 // Ekran görüntüsü kancasını kurar; run komutu pencere kurulduktan sonra çağırır.
