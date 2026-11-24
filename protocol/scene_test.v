@@ -3,6 +3,7 @@ module protocol
 import os
 import math
 import sim
+import ecs
 
 // Bu dosya kendi yardımcılarını taşır (server_test.v'deki yardımcılar görünmez).
 fn pick(v Val, key string) Val {
@@ -341,7 +342,7 @@ fn test_load_accepts_bom_and_crlf() {
 	assert scene_text(s.world(), s.registry()).contains('"x":2')
 }
 
-fn test_component_set_rejects_nan_in_explicit_range() {
+fn test_component_set_rejects_nan_string_in_explicit_range() {
 	mut s := new_scene_server()
 	defer {
 		s.close()
@@ -422,4 +423,34 @@ fn scene_call(mut s Server, line string) Val {
 
 fn scene_result(v Val) Val {
 	return pick(v, 'result')
+}
+
+// JSON NaN sayısı taşıyamaz: field_write'a doğrudan NaN sayısı verilir; açık aralık guard'ı bunu yakalamalı.
+fn test_field_write_nan_number_rejected_in_explicit_range() {
+	s := new_scene_server()
+	schema := s.registry().component(ecs.sprite_id) or { panic('Sprite yok') }
+	mut code := 0
+	s.field_write('Sprite', schema, 'r', num(math.nan()), false) or {
+		if err is RpcError {
+			code = err.err_code
+		}
+	}
+	assert code == code_invalid_params
+}
+
+fn test_load_rejects_inf_in_explicit_range_world_untouched() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	spawn_one(mut s)
+	before := s.engine.state_hash()
+	path := write_scene_file('inf_range.vscene', '{"format":"vscene","version":1,"entities":[{"components":{"Sprite":{"r":"inf"}}}]}')
+	assert error_code(load_reply(mut s, path)) == -32602
+	assert s.engine.state_hash() == before
 }
