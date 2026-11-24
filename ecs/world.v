@@ -142,6 +142,11 @@ pub fn (w &World) entities() &EntityAllocator {
 	return &w.alloc
 }
 
+// Varlık kapasitesi (scene.save başlığındaki capacity).
+pub fn (w &World) capacity() u32 {
+	return w.alloc.capacity
+}
+
 pub fn (w &World) alive_count() u32 {
 	return w.alloc.alive_count()
 }

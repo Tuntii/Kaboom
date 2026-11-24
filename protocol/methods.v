@@ -131,6 +131,11 @@ const command_docs = [
 		params: '{"path": string}'
 		result: '{"end_tick", "hash"}'
 	},
+	CommandDoc{
+		method: 'scene.save'
+		params: '{"path": string}'
+		result: '{"path", "entities": n, "bytes": n}; .vscene metni <path>.tmp üzerinden atomik olarak yazılır; hata io_error (1010) ve eski dosya yerinde kalır'
+	},
 ]
 
 fn (mut s Server) entity_spawn(p Val) !Val {
@@ -525,6 +530,20 @@ fn (s &Server) replay_run(p Val) !Val {
 	out.set('end_tick', num(f64(u64(res.end_tick))))
 	out.set('hash', hash_val(res.hash))
 	return out
+}
+
+// Dünyayı .vscene metni olarak yazar; yazım atomiktir (scene.v). Sim durumuna dokunmaz, tick dışındadır.
+fn (s &Server) scene_save(p Val) !Val {
+	path := string_param(p, 'path')!
+	text := scene_text(s.world(), s.registry())
+	save_scene_atomic(path, text) or {
+		return io_error(path, 'could not write file; check that the folder exists and is writable, then retry scene.save')
+	}
+	res := obj()
+	res.set('path', str_val(path))
+	res.set('entities', num(f64(s.world().alive_count())))
+	res.set('bytes', num(f64(text.len)))
+	return res
 }
 
 // Bileşen adini kayit id'sine çevirir; yoksa 1002.

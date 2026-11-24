@@ -255,6 +255,7 @@ fn (mut s Server) dispatch(method string, p Val) !Val {
 		'record.start' { return s.record_start() }
 		'record.stop' { return s.record_stop(p) }
 		'replay.run' { return s.replay_run(p) }
+		'scene.save' { return s.scene_save(p) }
 		else {}
 	}
 
