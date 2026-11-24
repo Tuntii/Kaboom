@@ -175,30 +175,35 @@ pub fn decode_png_stored(png []u8) !(int, int, []u8) {
 		return error('imza yok')
 	}
 	mut pos := 8
-	mut width := 0
-	mut height := 0
+	mut width := i64(0)
+	mut height := i64(0)
 	mut idat := []u8{}
 	mut saw_iend := false
 	for pos + 12 <= png.len {
-		len := int(u32(png[pos]) << 24 | u32(png[pos + 1]) << 16 | u32(png[pos + 2]) << 8 | u32(png[pos + 3]))
+		// Uzunluk işaretsiz okunur: 0x80000000 üstü int'te negatife döner.
+		clen := u64(u32(png[pos]) << 24 | u32(png[pos + 1]) << 16 | u32(png[pos + 2]) << 8 | u32(png[pos + 3]))
 		typ := png[pos + 4..pos + 8]
-		data_start := pos + 8
-		data_end := data_start + len
-		if data_end + 4 > png.len {
+		data_start := u64(pos + 8)
+		if data_start + clen + 4 > u64(png.len) {
 			return error('chunk taşıyor')
 		}
-		data := png[data_start..data_end]
+		data_end := int(data_start + clen)
+		data := png[int(data_start)..data_end]
 		stored_crc := u32(png[data_end]) << 24 | u32(png[data_end + 1]) << 16 | u32(png[data_end + 2]) << 8 | u32(png[data_end + 3])
 		if stored_crc != crc32(png[pos + 4..data_end]) {
 			return error('chunk CRC hatalı')
 		}
 		match typ.bytestr() {
 			'IHDR' {
-				if data.len < 8 {
+				if data.len < 13 {
 					return error('IHDR kısa')
 				}
-				width = int(u32(data[0]) << 24 | u32(data[1]) << 16 | u32(data[2]) << 8 | u32(data[3]))
-				height = int(u32(data[4]) << 24 | u32(data[5]) << 16 | u32(data[6]) << 8 | u32(data[7]))
+				width = i64(u32(data[0]) << 24 | u32(data[1]) << 16 | u32(data[2]) << 8 | u32(data[3]))
+				height = i64(u32(data[4]) << 24 | u32(data[5]) << 16 | u32(data[6]) << 8 | u32(data[7]))
+				// Yalnız RGBA8, sıkıştırmasız satır, filtre 0, etkileşimsiz (interlace 0) desteklenir.
+				if data[8] != 8 || data[9] != 6 || data[12] != 0 {
+					return error('yalnız RGBA8 ve interlace 0 desteklenir')
+				}
 			}
 			'IDAT' {
 				idat << data
@@ -212,6 +217,9 @@ pub fn decode_png_stored(png []u8) !(int, int, []u8) {
 	}
 	if !saw_iend {
 		return error('IEND yok')
+	}
+	if width <= 0 || height <= 0 || width > max_side || height > max_side {
+		return error('boyut geçersiz')
 	}
 	// zlib başlığı 2 bayt, sonda Adler-32 4 bayt.
 	if idat.len < 6 || idat[0] != 0x78 || idat[1] != 0x01 {
@@ -249,17 +257,21 @@ pub fn decode_png_stored(png []u8) !(int, int, []u8) {
 	if adler != adler32(raw) {
 		return error('Adler-32 hatalı')
 	}
+	// Boyutlar üst sınırla bağlı; çarpım i64'te hesaplanır ve indekslemeden önce ham veriyle karşılaştırılır.
 	row := width * 4
-	if raw.len < height * (row + 1) {
+	if i64(raw.len) < height * (row + 1) {
 		return error('ham veri kısa')
 	}
-	mut pixels := []u8{cap: row * height}
-	for r in 0 .. height {
-		base := r * (row + 1)
+	w := int(width)
+	h := int(height)
+	row_b := w * 4
+	mut pixels := []u8{cap: row_b * h}
+	for r in 0 .. h {
+		base := r * (row_b + 1)
 		if raw[base] != 0 {
 			return error('filtre baytı 0 değil')
 		}
-		pixels << raw[base + 1..base + 1 + row]
+		pixels << raw[base + 1..base + 1 + row_b]
 	}
-	return width, height, pixels
+	return w, h, pixels
 }

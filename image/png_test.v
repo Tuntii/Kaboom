@@ -152,3 +152,37 @@ fn test_decode_png_stored_rejects_bad_input() {
 	bad[bad.len - 20] ^= 0xFF
 	assert !decodes_ok(bad)
 }
+
+// Ham dosya ve IHDR alanları: taşma ve desteklenmeyen biçimler panik değil hata döner.
+fn test_decode_png_stored_rejects_hostile_fields() {
+	png := encode_rgba(2, 2, []u8{len: 16, init: u8(index)}, false) or { panic(err) }
+	// IEND'den önceki ilk chunk IHDR'dir (sig 8 bayt, uzunluk 4, tip 4, veri 13, CRC 4): uzunluk alanı pos 8.
+	mut big_len := png.clone()
+	big_len[8] = 0xFF
+	big_len[9] = 0xFF
+	big_len[10] = 0xFF
+	big_len[11] = 0xFF
+	assert !decodes_ok(big_len)
+	// IHDR yüksekliği 0x7FFFFFFF (veri 4..8 yükseklik): CRC'yi yeniden hesaplayıp geçerli kılınır.
+	mut tall := png.clone()
+	tall[20] = 0x7F
+	tall[21] = 0xFF
+	tall[22] = 0xFF
+	tall[23] = 0xFF
+	c := crc32(tall[12..29])
+	tall[29] = u8(c >> 24)
+	tall[30] = u8(c >> 16)
+	tall[31] = u8(c >> 8)
+	tall[32] = u8(c)
+	assert !decodes_ok(tall)
+	// Renk tipi 2 (RGB): IHDR veri 9. bayt; CRC yeniden hesaplanır.
+	mut rgb := png.clone()
+	rgb[25] = 2
+	c2 := crc32(rgb[12..29])
+	rgb[29] = u8(c2 >> 24)
+	rgb[30] = u8(c2 >> 16)
+	rgb[31] = u8(c2 >> 8)
+	rgb[32] = u8(c2)
+	assert !decodes_ok(rgb)
+}
+
