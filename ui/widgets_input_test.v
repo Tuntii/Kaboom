@@ -1194,3 +1194,66 @@ fn test_menu_keyboard_navigation() {
 	assert !t.open
 	assert t.sel == 2
 }
+
+// Klavyeyle açılan menü: Tab ile tetikleyici, Enter açar (ilk öğe vurgulu), Aşağı, Enter ikinci öğeyi seçer.
+fn test_keyboard_opened_menu_selects_second_item() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			if c.menu_item('bir') {
+				tp.sel = 1
+			}
+			if c.menu_item('iki') {
+				tp.sel = 2
+			}
+			c.menu_end()
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(300, 200), 1000), body)
+	wgt_frame(mut c, timed(menu_key_at(.tab, 1000), 1000), body)
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1100), 1100), body)
+	assert t.open
+	assert t.sel == 0
+	wgt_frame(mut c, timed(menu_key_at(.down, 1200), 1200), body)
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1300), 1300), body)
+	assert t.sel == 2
+	wgt_frame(mut c, timed(mouse_at(300, 200), 1400), body)
+	assert !t.open
+}
+
+// Menü açıkken odaktaki düğme (menünün arkasında) Enter ile tetiklenmez; menü klavyeyi sahiplenir.
+fn test_open_menu_blocks_focused_button_enter() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	mut clicks := 0
+	mut cp := &clicks
+	body := fn [mut tp, mut cp] (mut c Context) {
+		if c.button('arka', .secondary) {
+			unsafe {
+				*cp = *cp + 1
+			}
+		}
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			if c.menu_item('bir') {
+				tp.sel = 1
+			}
+			c.menu_end()
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(press_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(release_at(10, 42), 1000), body)
+	assert t.open
+	// Odak düğmeye geçer (menü açıkken Tab), sonra Enter: düğme tetiklenmez.
+	wgt_frame(mut c, timed(menu_key_at(.tab, 1200), 1200), body)
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1300), 1300), body)
+	assert clicks == 0
+	assert t.open
+}

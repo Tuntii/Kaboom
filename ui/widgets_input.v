@@ -629,15 +629,17 @@ pub fn (mut c Context) menu_button_ex(label string, text string, width Size, lea
 	if it.clicked {
 		open = !open
 		if h >= 0 {
-			c.states[h].data[off_menu_hl] = menu_none
+			// Klavyeyle açılan menü ilk öğeyi vurgular; fareyle açılan hiçbirini.
+			c.states[h].data[off_menu_hl] = if open && c.focus_visible { u8(0) } else { menu_none }
 		}
-	} else if open && (c.key_pressed(.escape) || (c.inp.pressed[0] && !it.hovered && !menu_r.contains(c.inp.mouse_x, c.inp.mouse_y))) {
+	} else if open && (c.raw_key(.escape) || (c.inp.pressed[0] && !it.hovered && !menu_r.contains(c.inp.mouse_x, c.inp.mouse_y))) {
 		open = false
 	}
 	if h >= 0 {
 		c.states[h].set_flag(off_open, open)
 		if open {
 			c.menu_nav(h)
+			c.kb_menu_next = true
 		}
 	}
 	c.menu_cur = id
@@ -692,10 +694,10 @@ fn (mut c Context) menu_nav(h int) {
 		return
 	}
 	cur := int(c.states[h].data[off_menu_hl])
-	if c.key_pressed(.down) {
+	if c.raw_key(.down) {
 		next := if cur >= n - 1 { 0 } else { cur + 1 }
 		c.states[h].data[off_menu_hl] = u8(next)
-	} else if c.key_pressed(.up) {
+	} else if c.raw_key(.up) {
 		next := if cur <= 0 || cur >= n { n - 1 } else { cur - 1 }
 		c.states[h].data[off_menu_hl] = u8(next)
 	}
@@ -727,11 +729,13 @@ pub fn (mut c Context) menu_item(text string) bool {
 	c.pop_id()
 	c.text(text, .body, fade(text_primary, c.menu_alpha))
 	c.close()
-	chosen := it.clicked || (kb && c.key_pressed(.enter))
+	chosen := it.clicked || (kb && c.kb_menu && c.raw_key(.enter))
 	if chosen {
 		if th >= 0 {
 			c.states[th].set_flag(off_open, false)
 		}
+		// Menü bu karede kapandı: sonraki kare klavyeyi geri almaz.
+		c.kb_menu_next = false
 	}
 	return chosen
 }

@@ -128,7 +128,9 @@ mut:
 	state_ovf    u32 // durum tablosu ya da odak listesi dolu iken yapılan istek sayısı (sessiz düşme yok)
 	visited      u32 // bu karede çizim geçişinin ziyaret ettiği (görünür) düğüm sayısı
 	vl_bottom    f32 // sanal liste: alt boşluk yüksekliği (virtual_list_end kullanır)
-	menu_idx     int // açık menüde işlenen öğe sayısı (bu karede)
+	menu_idx     int  // açık menüde işlenen öğe sayısı (bu karede)
+	kb_menu      bool // açık menü bu karede klavyeyi sahiplenir (önceki karenin durumu; menü tuşları diğer widget'lara gitmez)
+	kb_menu_next bool // bu karede bir menü açıksa bir sonraki kare için kb_menu
 	drag_dx      f32
 	drag_dy      f32
 	cursor       CursorHint
@@ -201,6 +203,8 @@ pub fn (mut c Context) begin(input Input, width f32, height f32, scale f32) {
 	c.overflow = 0
 	c.visited = 0
 	c.menu_idx = 0
+	c.kb_menu = c.kb_menu_next
+	c.kb_menu_next = false
 	c.id_top = 0
 	c.id_over = 0
 	c.hit_cur = 0
@@ -618,8 +622,16 @@ fn (mut c Context) touch(id u32) int {
 	return h
 }
 
-// Bu karede k tuşu basıldı mı (Input.keys kenar olayları; otomatik tekrar sayılmaz).
+// Bu karede k tuşu basıldı mı. Açık menü (kb_menu) Enter/Space/Esc/Ok tuşlarını sahiplenir: diğer widget'lar bunları görmez.
 fn (c &Context) key_pressed(k Key) bool {
+	if c.kb_menu && (k == .enter || k == .space || k == .escape || k == .up || k == .down) {
+		return false
+	}
+	return c.raw_key(k)
+}
+
+// Menünün kendi tuşları ve sahiplik dışı sorgular: Input.keys kenar olayları (otomatik tekrar sayılmaz).
+fn (c &Context) raw_key(k Key) bool {
 	for i in 0 .. c.inp.key_count {
 		if c.inp.keys[i] == k && !c.inp.key_repeat[i] {
 			return true

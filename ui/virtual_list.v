@@ -108,3 +108,27 @@ fn clamp_int(v int, lo int, hi int) int {
 	}
 	return v
 }
+
+// Satırı görünür kılar: yukarıdaysa üst hizalı, aşağıdaysa alt hizalı, zaten görünürse ofset değişmez.
+// Kare içinde, virtual_list_begin'den önce çağrılır (görünüm yüksekliği önceki karenin kutusundan alınır;
+// ilk karede kutu yoksa etkisizdir). Alt sınır begin'de içerik boyutuna kıskaçlanır.
+pub fn (mut c Context) reveal_row(label string, idx int, row_h f32) {
+	id := c.id(label)
+	h := c.touch(id)
+	if h < 0 {
+		return
+	}
+	view := (c.prev_rect(id) or { return }).h
+	top := f32(idx) * row_h
+	bottom := top + row_h
+	mut off := c.states[h].scroll
+	if top < off {
+		off = top
+	} else if bottom > off + view {
+		off = bottom - view
+	}
+	if off < 0 {
+		off = 0
+	}
+	c.states[h].scroll = off
+}
