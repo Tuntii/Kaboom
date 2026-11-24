@@ -151,6 +151,16 @@ pub fn (s &Sim) tick() u64 {
 	return s.current_tick
 }
 
+// Tekrar oynatma: kayıt başlangıç tick'ine çekilir. Tick yolunda kullanılmaz.
+pub fn (mut s Sim) set_tick(t u64) {
+	s.current_tick = t
+}
+
+// Kaydı o anki dünyanın görüntüsü ve tick'iyle başlatır (D2: her dünyada çalışır). Tahsis yapar; tick yolunda değildir.
+pub fn (mut s Sim) start_recording() {
+	s.recorder.start(s.world.snapshot(), s.current_tick)
+}
+
 pub fn (s &Sim) state_hash() u64 {
 	return state_hash(&s.world, s.current_tick)
 }

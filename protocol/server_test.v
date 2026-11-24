@@ -226,7 +226,7 @@ fn test_query_and_step() {
 	assert pick(t, 'tick').f64() == 10
 }
 
-fn test_record_start_requires_pristine_world() {
+fn test_record_start_works_on_any_world() {
 	mut s := new_server()
 	defer {
 		s.close()
@@ -234,10 +234,85 @@ fn test_record_start_requires_pristine_world() {
 	assert error_code(call(mut s,
 		'{"jsonrpc":"2.0","id":1,"method":"record.stop","params":{"path":"x.vrec"}}')) == 1008
 	_ = call(mut s, '{"jsonrpc":"2.0","id":2,"method":"entity.spawn"}')
-	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":3,"method":"record.start"}')) == 1008
-	_ = call(mut s, '{"jsonrpc":"2.0","id":4,"method":"sim.reset"}')
-	assert has(call(mut s, '{"jsonrpc":"2.0","id":5,"method":"record.start"}'), 'result')
-	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":6,"method":"record.start"}')) == 1008
+	_ = call(mut s, '{"jsonrpc":"2.0","id":3,"method":"sim.step","params":{"n":5}}')
+	assert has(call(mut s, '{"jsonrpc":"2.0","id":4,"method":"record.start"}'), 'result')
+	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":5,"method":"record.start"}')) == 1008
+}
+
+fn test_sim_reset_and_scene_load_refused_while_recording() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_protocol_refuse_${os.getpid()}.vscene').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	_ = call(mut s, '{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":2,"method":"scene.save","params":{"path":"${path}"}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":3,"method":"record.start"}')
+	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":4,"method":"sim.reset"}')) == 1008
+	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":5,"method":"scene.load","params":{"path":"${path}"}}')) == 1008
+	assert has(call(mut s, '{"jsonrpc":"2.0","id":6,"method":"entity.get","params":{"entity":0}}'), 'result')
+}
+
+// Yüklenmiş sahne, birkaç tick ve düzenlemeden sonra kaydedilir; replay hash canlı hash ile aynıdır.
+fn test_record_from_loaded_scene_replays() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	scene := os.join_path(os.temp_dir(), 'vcore_protocol_loaded_${os.getpid()}.vscene').replace('\\', '/')
+	path := os.join_path(os.temp_dir(), 'vcore_protocol_loaded_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(scene) or {}
+		os.rm(path) or {}
+	}
+	_ = call(mut s,
+		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":1,"y":2},"Body":{"vx":3}}}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":2,"method":"entity.spawn","params":{"components":{"Transform":{"x":-4}}}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":3,"method":"scene.save","params":{"path":"${scene}"}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":4,"method":"scene.load","params":{"path":"${scene}"}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":5,"method":"sim.step","params":{"n":20}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":6,"method":"record.start"}')
+	_ = call(mut s,
+		'{"jsonrpc":"2.0","id":7,"method":"entity.spawn","params":{"components":{"Transform":{"x":9},"Body":{"vy":1}}}}')
+	_ = call(mut s,
+		'{"jsonrpc":"2.0","id":8,"method":"component.set","params":{"entity":1,"component":"Body","field":"vx","value":5}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":9,"method":"sim.step","params":{"n":30}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":10,"method":"entity.despawn","params":{"entity":0}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":11,"method":"sim.step","params":{"n":10}}')
+	stop := result_of(call(mut s,
+		'{"jsonrpc":"2.0","id":12,"method":"record.stop","params":{"path":"${path}"}}'))
+	assert pick(stop, 'end_tick').f64() == 60
+	live := result_of(call(mut s, '{"jsonrpc":"2.0","id":13,"method":"sim.state_hash"}'))
+	live_hash := str_of(pick(live, 'hash'))
+	assert str_of(pick(stop, 'hash')) == live_hash
+	replay := result_of(call(mut s,
+		'{"jsonrpc":"2.0","id":14,"method":"replay.run","params":{"path":"${path}"}}'))
+	assert pick(replay, 'end_tick').f64() == 60
+	assert str_of(pick(replay, 'hash')) == live_hash
+}
+
+// Sürüm 2 gövdesinde tek bayt bozulursa sağlama reddeder; hata replay.run'da io_error (1010) olarak döner.
+fn test_replay_corrupted_v2_checksum_is_io_error() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_protocol_corrupt_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	_ = call(mut s, '{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":2,"method":"record.start"}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":3,"method":"sim.step","params":{"n":3}}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":4,"method":"record.stop","params":{"path":"${path}"}}')
+	mut data := os.read_bytes(path) or { panic(err) }
+	data[data.len - 1] ^= 0x01
+	os.write_file_array(path, data) or { panic(err) }
+	assert error_code(call(mut s,
+		'{"jsonrpc":"2.0","id":5,"method":"replay.run","params":{"path":"${path}"}}')) == 1010
 }
 
 fn test_record_roundtrip_and_replay_run() {
@@ -461,7 +536,7 @@ fn write_recording(path string, entity ecs.EntityID, world_capacity u32) {
 	}
 	mut a := memory.LinearArena.new(region, 1 << 16)
 	mut rec := cmd.Recorder.new(mut a, 4) or { panic('Recorder.new none') }
-	rec.start()
+	rec.start([]u8{}, 0)
 	rec.append(0, cmd.Command{ kind: .set_field, source: .agent, entity: entity, comp: 0, field: 0, value: 0 })
 	rec.save(path, world_capacity, 1) or { panic(err) }
 }
@@ -797,15 +872,4 @@ fn test_spawn_seeds_prev() {
 	tr := pick(pick(got, 'components'), 'Transform')
 	assert pick(tr, 'prev_x').f64() == 3
 	assert pick(tr, 'prev_y').f64() == 4
-}
-
-fn test_record_start_hint_mentions_pause_reset() {
-	mut s := new_server()
-	defer {
-		s.close()
-	}
-	_ = call(mut s, '{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}')
-	e := call(mut s, '{"jsonrpc":"2.0","id":2,"method":"record.start"}')
-	hint := str_of(pick(pick(pick(e, 'error'), 'data'), 'hint'))
-	assert hint.contains('call sim.pause, then sim.reset, then record.start'), hint
 }

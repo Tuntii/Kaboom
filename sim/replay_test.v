@@ -24,7 +24,7 @@ fn record_live_scenario(path string, reg &ecs.Registry) u64 {
 	mut a := memory.LinearArena.new(region, need)
 	mut s := Sim.new(mut a, reg, cfg) or { panic('Sim.new none') }
 
-	s.recorder.start()
+	s.start_recording()
 	for _ in 0 .. 10 {
 		s.push(cmd.Command{
 			kind:   .spawn
@@ -254,4 +254,101 @@ fn test_replay_rejects_end_tick_before_last_entry() {
 		]
 	}
 	assert replay_error(rec, &reg) == 'replay ayrıştı: tick 4: bitiş son girdiden (tick 5) önce'
+}
+
+fn new_replay_sim(reg &ecs.Registry, cfg Config) (Sim, &u8) {
+	need := cfg.bytes_needed(reg)
+	region := memory.reserve(need) or { panic('reserve basarisiz') }
+	mut a := memory.LinearArena.new(region, need)
+	s := Sim.new(mut a, reg, cfg) or { panic('Sim.new none') }
+	return s, region
+}
+
+// Dünya görüntüsü: boşluklu, emekli slotlu ve nesli > 0 bir dünya geri yüklenince hash ve sonraki id aynıdır.
+fn test_snapshot_restore_matches_hash_and_next_id() {
+	reg := ecs.core_registry() or { panic('registry basarisiz') }
+	cfg := Config{
+		capacity:        16
+		queue_capacity:  64
+		record_capacity: 64
+	}
+	need := cfg.bytes_needed(&reg)
+	region_a := memory.reserve(need) or { panic('reserve basarisiz') }
+	defer { memory.release(region_a) }
+	mut a := memory.LinearArena.new(region_a, need)
+	mut src := Sim.new(mut a, &reg, cfg) or { panic('Sim.new none') }
+	region_b := memory.reserve(need) or { panic('reserve basarisiz') }
+	defer { memory.release(region_b) }
+	mut b := memory.LinearArena.new(region_b, need)
+	mut dst := Sim.new(mut b, &reg, cfg) or { panic('Sim.new none') }
+
+	for _ in 0 .. 3 {
+		e := src.world.spawn() or { panic('spawn none') }
+		assert src.world.despawn(e)
+	}
+	mut es := []ecs.EntityID{}
+	for _ in 0 .. 5 {
+		es << src.world.spawn() or { panic('spawn none') }
+	}
+	for e in es {
+		_ = src.world.add_component(e, ecs.transform_id)
+		_ = src.world.add_component(e, ecs.body_id)
+		_ = src.world.set_field(e, ecs.body_id, 0, u64(math.f32_bits(f32(e.index()) + 0.5)))
+	}
+	assert src.world.despawn(es[1])
+	assert src.world.despawn(es[3])
+	for _ in 0 .. 25 {
+		src.step()
+	}
+	dst.world.restore(src.world.snapshot()) or { panic(err) }
+	dst.set_tick(src.tick())
+	assert dst.state_hash() == src.state_hash()
+	for _ in 0 .. 10 {
+		src.step()
+		dst.step()
+	}
+	assert dst.state_hash() == src.state_hash()
+	ea := src.world.spawn() or { panic('spawn none') }
+	eb := dst.world.spawn() or { panic('spawn none') }
+	assert ea == eb
+	assert dst.state_hash() == src.state_hash()
+}
+
+// Sürüm 1 kaydı (boş dünya, tick 0, görüntü yok) hâlâ oynatılır ve canlı durumla aynı hash'i verir.
+fn test_v1_recording_still_replays() {
+	reg := ecs.core_registry() or { panic('registry basarisiz') }
+	e := ecs.make_entity(0, 0)
+	value := u64(math.f32_bits(f32(2.5)))
+	rec := cmd.Recording{
+		capacity:   16
+		start_tick: 0
+		end_tick:   4
+		snapshot:   []u8{}
+		entries:    [
+			cmd.RecordEntry{
+				tick: 0
+				cmd:  cmd.Command{ kind: .spawn, source: .agent, entity: e }
+			},
+			cmd.RecordEntry{
+				tick: 0
+				cmd:  cmd.Command{ kind: .add_component, source: .agent, entity: e, comp: ecs.transform_id }
+			},
+			cmd.RecordEntry{
+				tick: 1
+				cmd:  cmd.Command{ kind: .set_field, source: .agent, entity: e, comp: ecs.transform_id, field: 0, value: value }
+			},
+		]
+	}
+	res := replay(rec, &reg) or { panic(err) }
+	mut live, region := new_replay_sim(&reg, Config{ capacity: 16, queue_capacity: 64, record_capacity: 64 })
+	defer { memory.release(region) }
+	_ = cmd.apply(mut live.world, rec.entries[0].cmd)
+	_ = cmd.apply(mut live.world, rec.entries[1].cmd)
+	live.step()
+	_ = cmd.apply(mut live.world, rec.entries[2].cmd)
+	for _ in 0 .. 3 {
+		live.step()
+	}
+	assert res.end_tick == 4
+	assert res.hash == live.state_hash()
 }

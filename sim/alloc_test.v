@@ -38,7 +38,7 @@ fn test_tick_has_zero_heap_allocs() {
 		s.world.add_component(e, ecs.transform_id)
 		s.world.add_component(e, ecs.body_id)
 	}
-	s.recorder.start()
+	s.start_recording()
 	before := memory.heap_alloc_count()
 	for _ in 0 .. 100 {
 		for i in 0 .. 1000 {
