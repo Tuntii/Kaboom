@@ -129,7 +129,7 @@ fn showcase_editor(mut c Context, mut st ShowcaseState) {
 		c.list_row_end()
 	}
 	c.close()
-	c.splitter('split_l', mut &st.left_w, 160, 420)
+	c.splitter('split_l', mut &st.left_w, 160, 420, true)
 
 	c.open('scene', Box{
 		width:  grow()
@@ -137,7 +137,7 @@ fn showcase_editor(mut c Context, mut st ShowcaseState) {
 	})
 	c.close()
 
-	c.splitter('split_r', mut &st.right_w, 240, 420)
+	c.splitter('split_r', mut &st.right_w, 240, 420, false)
 	c.open('inspector', Box{
 		dir:     .column
 		width:   fixed(st.right_w)

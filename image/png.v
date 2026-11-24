@@ -166,3 +166,100 @@ fn write_chunk(mut out []u8, typ string, data []u8) {
 	out << data
 	put_u32_be(mut out, crc32(out[start..]))
 }
+
+// Bu modülün ürettiği stored deflate RGBA8 PNG'lerini çözer (test ve gallery ekran görüntüsü doğrulaması).
+// Chunk CRC'leri ve Adler-32 doğrulanır; sınır dışı okuma hata döner.
+pub fn decode_png_stored(png []u8) !(int, int, []u8) {
+	sig := [u8(0x89), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+	if png.len < 8 || png[..8] != sig {
+		return error('imza yok')
+	}
+	mut pos := 8
+	mut width := 0
+	mut height := 0
+	mut idat := []u8{}
+	mut saw_iend := false
+	for pos + 12 <= png.len {
+		len := int(u32(png[pos]) << 24 | u32(png[pos + 1]) << 16 | u32(png[pos + 2]) << 8 | u32(png[pos + 3]))
+		typ := png[pos + 4..pos + 8]
+		data_start := pos + 8
+		data_end := data_start + len
+		if data_end + 4 > png.len {
+			return error('chunk taşıyor')
+		}
+		data := png[data_start..data_end]
+		stored_crc := u32(png[data_end]) << 24 | u32(png[data_end + 1]) << 16 | u32(png[data_end + 2]) << 8 | u32(png[data_end + 3])
+		if stored_crc != crc32(png[pos + 4..data_end]) {
+			return error('chunk CRC hatalı')
+		}
+		match typ.bytestr() {
+			'IHDR' {
+				if data.len < 8 {
+					return error('IHDR kısa')
+				}
+				width = int(u32(data[0]) << 24 | u32(data[1]) << 16 | u32(data[2]) << 8 | u32(data[3]))
+				height = int(u32(data[4]) << 24 | u32(data[5]) << 16 | u32(data[6]) << 8 | u32(data[7]))
+			}
+			'IDAT' {
+				idat << data
+			}
+			'IEND' {
+				saw_iend = true
+			}
+			else {}
+		}
+		pos = data_end + 4
+	}
+	if !saw_iend {
+		return error('IEND yok')
+	}
+	// zlib başlığı 2 bayt, sonda Adler-32 4 bayt.
+	if idat.len < 6 || idat[0] != 0x78 || idat[1] != 0x01 {
+		return error('zlib başlığı hatalı')
+	}
+	mut raw := []u8{}
+	mut p := 2
+	for {
+		if p + 5 > idat.len {
+			return error('zlib blok başlığı kısa')
+		}
+		header := idat[p]
+		len := int(u32(idat[p + 1]) | u32(idat[p + 2]) << 8)
+		nlen := int(u32(idat[p + 3]) | u32(idat[p + 4]) << 8)
+		if nlen != (len ^ 0xFFFF) {
+			return error('NLEN ~LEN değil')
+		}
+		p += 5
+		if p + len > idat.len {
+			return error('stored blok taşıyor')
+		}
+		raw << idat[p..p + len]
+		p += len
+		if (header >> 1) & 0x3 != 0 {
+			return error('stored olmayan blok')
+		}
+		if header & 1 == 1 {
+			break
+		}
+	}
+	if p + 4 > idat.len {
+		return error('Adler-32 eksik')
+	}
+	adler := u32(idat[p]) << 24 | u32(idat[p + 1]) << 16 | u32(idat[p + 2]) << 8 | u32(idat[p + 3])
+	if adler != adler32(raw) {
+		return error('Adler-32 hatalı')
+	}
+	row := width * 4
+	if raw.len < height * (row + 1) {
+		return error('ham veri kısa')
+	}
+	mut pixels := []u8{cap: row * height}
+	for r in 0 .. height {
+		base := r * (row + 1)
+		if raw[base] != 0 {
+			return error('filtre baytı 0 değil')
+		}
+		pixels << raw[base + 1..base + 1 + row]
+	}
+	return width, height, pixels
+}

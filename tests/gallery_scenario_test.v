@@ -5,80 +5,7 @@ import image
 
 // vcore gallery: pencereli vitrin derlenir, tek kare ekran görüntüsü alınır ve pikseller denetlenir.
 // GL yoksa süreç çıkış kodu 3 ile biter; bu durumda test atlanır.
-// PNG çözücü tests/render_scenario_test.v'deki kopyadır: her _test.v dosyası ayrı derlenir (render/alloc_test.v deseni).
-
-fn gal_be32(b []u8, p int) u32 {
-	return u32(b[p]) << 24 | u32(b[p + 1]) << 16 | u32(b[p + 2]) << 8 | u32(b[p + 3])
-}
-
-// Yalnızca bu projenin ürettiği stored deflate RGBA PNG'lerini çözer. CRC ve Adler-32 doğrulanır.
-fn gal_decode_png(png []u8) !(int, int, []u8) {
-	if png.len < 8 || png[..8] != [u8(0x89), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] {
-		return error('imza yok')
-	}
-	mut pos := 8
-	mut w := 0
-	mut h := 0
-	mut idat := []u8{}
-	for pos + 12 <= png.len {
-		n := int(gal_be32(png, pos))
-		typ := png[pos + 4..pos + 8].bytestr()
-		ds := pos + 8
-		de := ds + n
-		if de + 4 > png.len {
-			return error('chunk tasiyor')
-		}
-		if gal_be32(png, de) != image.crc32(png[pos + 4..de]) {
-			return error('chunk CRC hatali')
-		}
-		match typ {
-			'IHDR' {
-				w = int(gal_be32(png, ds))
-				h = int(gal_be32(png, ds + 4))
-			}
-			'IDAT' {
-				idat << png[ds..de]
-			}
-			else {}
-		}
-		pos = de + 4
-		if typ == 'IEND' {
-			break
-		}
-	}
-	// zlib başlığı 2 bayt; ardından stored bloklar; sonda Adler-32.
-	if idat.len < 6 || idat[0] != 0x78 || idat[1] != 0x01 {
-		return error('zlib basligi hatali')
-	}
-	mut raw := []u8{}
-	mut p := 2
-	for {
-		hdr := idat[p]
-		if hdr & 0x06 != 0 {
-			return error('stored olmayan blok')
-		}
-		len := int(u32(idat[p + 1]) | u32(idat[p + 2]) << 8)
-		p += 5
-		raw << idat[p..p + len]
-		p += len
-		if hdr & 1 == 1 {
-			break
-		}
-	}
-	if gal_be32(idat, p) != image.adler32(raw) {
-		return error('Adler-32 hatali')
-	}
-	row := w * 4
-	mut pixels := []u8{cap: row * h}
-	for r in 0 .. h {
-		base := r * (row + 1)
-		if raw[base] != 0 {
-			return error('filtre bayti 0 degil')
-		}
-		pixels << raw[base + 1..base + 1 + row]
-	}
-	return w, h, pixels
-}
+// PNG çözücü image.decode_png_stored (tek kopya); her _test.v dosyası ayrı derlendiği için yardımcılar dosya başına.
 
 fn gal_pixel(pixels []u8, w int, x int, y int) []u8 {
 	o := (y * w + x) * 4
@@ -117,7 +44,7 @@ fn test_gallery_screenshot() {
 	assert run.exit_code == 0, run.output
 
 	png := os.read_bytes(shot_path) or { panic('gallery.png okunamadi: ${err}') }
-	w, h, px := gal_decode_png(png) or { panic('PNG cozulemedi: ${err}') }
+	w, h, px := image.decode_png_stored(png) or { panic('PNG cozulemedi: ${err}') }
 	assert w == 1280 && h == 800, 'PNG boyutu ${w}x${h}'
 
 	surface_0 := [u8(0x11), 0x12, 0x14]

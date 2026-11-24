@@ -160,7 +160,7 @@ fn test_splitter_drag_clamped() {
 	}
 	mut tp := &t
 	body := fn [mut tp] (mut c Context) {
-		c.splitter('sp', mut &tp.size, 100, 400)
+		c.splitter('sp', mut &tp.size, 100, 400, true)
 	}
 	wgt_frame(mut c, mouse_at(2, 10), body)
 	wgt_frame(mut c, press_at(2, 10), body)
@@ -173,6 +173,36 @@ fn test_splitter_drag_clamped() {
 	mut left := mouse_at(-498, 10)
 	left.down[0] = true
 	wgt_frame(mut c, left, body)
+	assert t.size == 100
+}
+
+// Sağ panel ayırıcısı: sağa sürükleme size'ı azaltır (grows_right false), sınırlar aynı kalır.
+fn test_splitter_right_panel_drag_inverted() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := Tally{
+		size: 240
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		c.splitter('sp', mut &tp.size, 100, 400, false)
+	}
+	wgt_frame(mut c, mouse_at(2, 10), body)
+	wgt_frame(mut c, press_at(2, 10), body)
+
+	mut right := mouse_at(52, 10)
+	right.down[0] = true
+	wgt_frame(mut c, right, body)
+	assert t.size == 190
+
+	mut left := mouse_at(-398, 10)
+	left.down[0] = true
+	wgt_frame(mut c, left, body)
+	assert t.size == 400
+
+	mut far_right := mouse_at(1002, 10)
+	far_right.down[0] = true
+	wgt_frame(mut c, far_right, body)
 	assert t.size == 100
 }
 
@@ -351,7 +381,7 @@ fn test_widget_frame_has_zero_heap_allocs() {
 		if c.section('sec', 'Başlık') {
 			c.list_row('row', 'satır', true)
 		}
-		c.splitter('sp', mut &tp.size, 100, 400)
+		c.splitter('sp', mut &tp.size, 100, 400, true)
 		c.separator()
 		c.statusbar_begin()
 		c.statusbar_text('durum')

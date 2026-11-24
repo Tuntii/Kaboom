@@ -173,15 +173,16 @@ pub fn (mut c Context) separator() {
 }
 
 // Dikey tutamak: sürükleme size'ı yatay delta kadar değiştirir, [min, max] içinde kalır.
+// grows_right: sağa sürükleme size'ı artırır (sol panel); false ise sağ panel için ters yönlüdür.
 // size &f32: V'de mut skaler parametre yok.
-pub fn (mut c Context) splitter(label string, mut size &f32, min f32, max f32) {
+pub fn (mut c Context) splitter(label string, mut size &f32, min f32, max f32, grows_right bool) {
 	id := c.id(label)
 	it := c.interact(id, false)
 	active := it.hovered || it.dragging
 	unsafe {
 		mut v := *size
 		if it.dragging {
-			v += it.drag_dx
+			v += if grows_right { it.drag_dx } else { -it.drag_dx }
 		}
 		if v < min {
 			v = min
