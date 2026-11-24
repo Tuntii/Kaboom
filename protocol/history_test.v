@@ -56,9 +56,11 @@ fn rq(id int, body string) string {
 }
 
 // Transform.x değeri; varlık yoksa hata yanıtı olduğundan 0 döner.
+// Varlık yoksa (hata yanıtı) test düşer: 0 varsayılanı eksik varlığı gizlemesin.
 fn tr_x(mut s Server, e u64) f64 {
-	r := hresult(hcall(mut s, rq(1, '"method":"entity.get","params":{"entity":${e}}')))
-	return hpick(hpick(hpick(r, 'components'), 'Transform'), 'x').f64()
+	resp := hcall(mut s, rq(1, '"method":"entity.get","params":{"entity":${e}}'))
+	assert herror(resp) == -1, 'entity ${e} is not alive'
+	return hpick(hpick(hpick(hresult(resp), 'components'), 'Transform'), 'x').f64()
 }
 
 fn live_count(mut s Server) int {
@@ -194,7 +196,7 @@ fn test_cancel_group_restores_and_leaves_no_trace() {
 	set_x(mut s, e, 1, .editor)
 	set_x(mut s, e, 2, .editor)
 	set_x(mut s, e, 3, .editor)
-	s.history_cancel_group()
+	s.history_cancel_group() or { panic(err) }
 	assert tr_x(mut s, e) == 0
 	assert s.engine.history.undo_len() == 1
 	assert s.engine.history.redo_len() == 0
@@ -367,4 +369,77 @@ fn test_stale_handle_mutators_after_slot_reuse() {
 	assert herror(hcall(mut s, rq(4, '"method":"component.set","params":{"entity":${old},"component":"Transform","field":"x","value":1}'))) == 1001
 	assert herror(hcall(mut s, rq(5, '"method":"component.remove","params":{"entity":${old},"component":"Transform"}'))) == 1001
 	assert herror(hcall(mut s, rq(6, '"method":"entity.despawn","params":{"entity":${old}}'))) == 1001
+}
+
+// Açık editör grubunda geri alma, hazırlama alanı boşken bile reddedilir; grup kapanınca çalışır.
+fn test_undo_refused_while_editor_group_open() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	e := spawn_at(mut s, 0)
+	set_x(mut s, e, 1, .agent)
+	s.history_begin_group()
+	assert !hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert s.engine.history.undo_len() == 2
+	assert s.engine.history.redo_len() == 0
+	assert tr_x(mut s, e) == 1
+	set_x(mut s, e, 2, .editor)
+	assert !hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert s.engine.history.undo_len() == 2
+	s.history_end_group()
+	// Grup kapandı: önce editörün yazımı geri alınır (x = 1), sonra agent yazımı.
+	assert hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert tr_x(mut s, e) == 1
+}
+
+// Hazırlama alanı taşmış grupta iptal hiçbir şey uygulamaz, hata döner ve grup açık kalır.
+fn test_cancel_refuses_overflowed_group() {
+	mut s := Server.new(sim.Config{
+		capacity:         64
+		queue_capacity:   64
+		record_capacity:  1024
+		history_capacity: 4
+		history_groups:   8
+	}) or { panic(err) }
+	defer {
+		s.close()
+	}
+	e := spawn_at(mut s, 0)
+	s.history_begin_group()
+	for i in 1 .. 7 {
+		set_x(mut s, e, f64(i), .editor)
+	}
+	assert s.engine.history.stage_overflowed()
+	mut refused := false
+	s.history_cancel_group() or { refused = true }
+	assert refused
+	// Kısmi geri alma yok: değer son yazılan değerde kalır.
+	assert tr_x(mut s, e) == 6
+	s.history_end_group()
+	assert s.engine.history.dropped_groups() >= 1
+}
+
+// Geri alma komutları, isteği yapanın kaynağını taşır: kayıtta editör olarak görünmeli.
+fn test_undo_records_requester_source() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_hist_src_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	_ = hcall(mut s, rq(1, '"method":"record.start"'))
+	e := spawn_at(mut s, 1)
+	// Geri alınan yazım agent kaynaklı; geri almayı editör istiyor. Ters yazım editör olmalı.
+	set_x(mut s, e, 5, .agent)
+	set_x(mut s, e, 7, .agent)
+	_ = s.handle_from(rq(2, '"method":"history.undo"'), .editor)
+	_ = hcall(mut s, rq(3, '"method":"record.stop","params":{"path":"${path}"}'))
+	rec := cmd.load_recording(path) or { panic(err) }
+	n := rec.entries.len
+	assert rec.entries[n - 1].cmd.source == .editor
+	assert rec.entries[n - 1].cmd.kind == .set_field
+	assert rec.entries[n - 2].cmd.source == .agent
 }

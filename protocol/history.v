@@ -21,11 +21,15 @@ pub fn (mut s Server) history_redo() !Val {
 }
 
 fn (mut s Server) history_run(undo bool) !Val {
+	// Açık editör grubunun içinde geri alma tanımsızdır: yığınlara dokunmadan reddedilir.
+	if s.editor_group {
+		return history_result(false, 0, 0, []IdPair{})
+	}
 	popped := if undo { s.engine.history.pop_undo() } else { s.engine.history.pop_redo() }
 	// Yığın boşsa hata değil: applied false.
 	view := popped or { return history_result(false, 0, 0, []IdPair{}) }
-	// Kopya önce alınır: ters işlemin yakalaması halkanın üzerine yazar.
-	mut blocks := copy_blocks(view)
+	// Kopya önce alınır: ters işlemin yakalaması halkanın üzerine yazar. Komutlar isteği yapanın kaynağını taşır.
+	mut blocks := copy_blocks(view, s.source)
 	mode := if undo { cmd.HistoryMode.undoing } else { cmd.HistoryMode.redoing }
 	// Tüm yürütme tek grup: karşı yığına (yineleme ya da geri alma) tek bir adım olarak girer.
 	s.engine.history.begin_group()
@@ -38,19 +42,26 @@ fn (mut s Server) history_run(undo bool) !Val {
 
 // Editör API'si (protokol komutu değil): açık grup, süreç içi istekleri tek geri alma adımında toplar.
 pub fn (mut s Server) history_begin_group() {
+	s.editor_group = true
 	s.engine.history.begin_group()
 }
 
 pub fn (mut s Server) history_end_group() {
+	s.editor_group = false
 	s.engine.history.end_group()
 }
 
 // Açık grubun ters bloklarını hemen ters sırada uygular (yakalama kapalı) ve grubu hiçbir yığına koymaz.
-// Yakalanmış blok kapasiteyi aştıysa eksik kalan kısım uygulanamaz; bu durumda çağıran sorumludur.
-pub fn (mut s Server) history_cancel_group() {
+// Hazırlama alanı kapasiteyi aştıysa hiçbir şey uygulanmaz, grup açık kalır ve hata döner: çağıran
+// history_end_group ile normal kapatabilir (taşan grup düşürülür).
+pub fn (mut s Server) history_cancel_group() ! {
+	if s.engine.history.stage_overflowed() {
+		return error('history: open group overflowed the staging area; nothing was undone, end the group normally')
+	}
 	view := s.engine.history.staged()
-	mut blocks := copy_blocks(view)
+	mut blocks := copy_blocks(view, .editor)
 	s.engine.history.abandon_group()
+	s.editor_group = false
 	s.engine.history.set_mode(.off)
 	_, _, _ = s.apply_blocks(mut blocks)
 	s.engine.history.set_mode(.normal)
@@ -106,12 +117,15 @@ fn rewrite_after(mut blocks [][]cmd.Command, bi int, ci int, old ecs.EntityID, n
 }
 
 // Blokları ring belleğinden ayrı dizilere kopyalar; block(0) en son blok, yani uygulama sırası.
-fn copy_blocks(view cmd.GroupView) [][]cmd.Command {
+// Her komut, bu işlemi tetikleyen isteğin kaynağını taşır (kayıtta kimin yaptığı görünsün).
+fn copy_blocks(view cmd.GroupView, src cmd.Source) [][]cmd.Command {
 	mut out := [][]cmd.Command{}
 	for i in 0 .. view.block_count() {
 		mut dst := []cmd.Command{}
 		for c in view.block(i) {
-			dst << c
+			mut sc := c
+			sc.source = src
+			dst << sc
 		}
 		out << dst
 	}
