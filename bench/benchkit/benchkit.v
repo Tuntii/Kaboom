@@ -52,15 +52,19 @@ pub fn results_dir() string {
 }
 
 // Tek bir benchmark sonucu. state_hash M2'ye kadar "". seed: veri uretiminin tohumu (yoksa 0).
+// draw_cmds, nodes, allocs_per_frame: yalnizca UI karesi olcumleri (m4_ui); digerleri 0 ve -1 (olculmadi).
 pub struct Result {
 pub:
-	name           string
-	entities       u32
-	ops_per_sample u32
-	stats          Stats
-	mem_bytes      u64
-	state_hash     string
-	seed           u64
+	name             string
+	entities         u32
+	ops_per_sample   u32
+	stats            Stats
+	mem_bytes        u64
+	state_hash       string
+	seed             u64
+	draw_cmds        u32
+	nodes            u32
+	allocs_per_frame i64 = -1
 }
 
 // Bir kosunun tum sonuclari. date biçimi YYYY-MM-DD-HHMMSS. suite: benchmark programi (m1_memory, m2_tick).
