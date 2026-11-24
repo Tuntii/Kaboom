@@ -44,3 +44,23 @@ fn test_replace_file_missing_tmp_keeps_dst() {
 	}
 	assert false, 'missing tmp must fail'
 }
+
+fn test_read_file_unicode_path_roundtrip() {
+	dir := os.join_path(os.temp_dir(), 'vcore_winfile_read_test')
+	os.rmdir_all(dir) or {}
+	os.mkdir_all(dir) or { panic(err) }
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	path := os.join_path(dir, 'sahne_ğüş.vscene')
+	write_file(path, [u8(0x00), 0x0a, 0xff, 0x0d]) or { panic(err) }
+	got := read_file(path) or { panic(err) }
+	assert got == [u8(0x00), 0x0a, 0xff, 0x0d]
+}
+
+fn test_read_file_missing_fails() {
+	dir := os.join_path(os.temp_dir(), 'vcore_winfile_read_missing_test')
+	os.rmdir_all(dir) or {}
+	read_file(os.join_path(dir, 'yok.vscene')) or { return }
+	assert false, 'missing file must fail'
+}

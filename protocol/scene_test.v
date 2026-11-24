@@ -134,3 +134,219 @@ fn test_save_unicode_path() {
 	assert (os.read_file(path) or { panic(err) }) == content
 	assert !os.exists(path + '.tmp')
 }
+
+fn scene_load_dir() string {
+	return os.join_path(os.temp_dir(), 'vcore_scene_load_test')
+}
+
+// Test dosyasını yazar; yol JSON metni için ileri eğik çizgilidir.
+fn write_scene_file(name string, content string) string {
+	dir := scene_load_dir()
+	os.mkdir_all(dir) or { panic(err) }
+	path := os.join_path(dir, name)
+	os.write_file(path, content) or { panic(err) }
+	return path.replace('\\', '/')
+}
+
+fn load_reply(mut s Server, path string) Val {
+	return scene_call(mut s, '{"jsonrpc":"2.0","id":9,"method":"scene.load","params":{"path":"${path}"}}')
+}
+
+fn spawn_one(mut s Server) {
+	s.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":7,"y":8}}}}') or { panic('yanıt yok') }
+}
+
+fn test_save_load_save_byte_equal() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	s.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":1,"y":2},"Sprite":{"size":1,"r":0.5,"g":0,"b":1}}}}') or { panic('yanıt yok') }
+	spawn_one(mut s)
+	path_a := write_scene_file('a.vscene', scene_text(s.world(), s.registry()))
+	path_b := os.join_path(dir, 'b.vscene').replace('\\', '/')
+	s.handle('{"jsonrpc":"2.0","id":2,"method":"scene.save","params":{"path":"${path_a}"}}') or { panic('yanıt yok') }
+	load_reply(mut s, path_a)
+	s.handle('{"jsonrpc":"2.0","id":3,"method":"scene.save","params":{"path":"${path_b}"}}') or { panic('yanıt yok') }
+	assert (os.read_file(path_a) or { panic(err) }) == (os.read_file(path_b) or { panic(err) })
+}
+
+fn test_load_twice_same_hash() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	spawn_one(mut s)
+	path := write_scene_file('twice.vscene', scene_text(s.world(), s.registry()))
+	load_reply(mut s, path)
+	h1 := s.engine.state_hash()
+	load_reply(mut s, path)
+	assert s.engine.state_hash() == h1
+}
+
+fn test_dense_world_roundtrip_same_hash() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	for i in 0 .. 5 {
+		s.handle('{"jsonrpc":"2.0","id":${i},"method":"entity.spawn","params":{"components":{"Transform":{"x":${i}.5,"y":-${i}},"Body":{"vx":1,"vy":0.25}}}}') or { panic('yanıt yok') }
+	}
+	before := s.engine.state_hash()
+	path := write_scene_file('dense.vscene', scene_text(s.world(), s.registry()))
+	reply := load_reply(mut s, path)
+	assert pick(scene_result(reply), 'entities').len() == 5
+	assert s.engine.state_hash() == before
+}
+
+fn test_holey_world_roundtrip_values() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	s.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":1,"y":2}}}}') or { panic('yanıt yok') }
+	s.handle('{"jsonrpc":"2.0","id":2,"method":"entity.spawn","params":{"components":{"Transform":{"x":5,"y":6}}}}') or { panic('yanıt yok') }
+	s.handle('{"jsonrpc":"2.0","id":3,"method":"entity.spawn","params":{"components":{"Transform":{"x":9,"y":10}}}}') or { panic('yanıt yok') }
+	s.handle('{"jsonrpc":"2.0","id":4,"method":"entity.despawn","params":{"entity":1}}') or { panic('yanıt yok') }
+	saved := scene_text(s.world(), s.registry())
+	path := write_scene_file('holey.vscene', saved)
+	reply := load_reply(mut s, path)
+	assert pick(scene_result(reply), 'entities').len() == 2
+	assert scene_text(s.world(), s.registry()) == saved
+}
+
+fn test_load_errors_leave_world_untouched() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	spawn_one(mut s)
+	before := s.engine.state_hash()
+	mut many := []string{}
+	for _ in 0 .. 65 {
+		many << '{"components":{}}'
+	}
+	cases := [
+		// bozuk JSON
+		['broken.vscene', '{"format":"vscene","version":1,"entities":[', '-32602'],
+		// yanlış format ve sürüm
+		['format.vscene', '{"format":"json","version":1,"entities":[]}', '-32602'],
+		['version.vscene', '{"format":"vscene","version":2,"entities":[]}', '-32602'],
+		// bilinmeyen bileşen
+		['unknown.vscene', '{"format":"vscene","version":1,"entities":[{"components":{"Nope":{}}}]}', '1002'],
+		// readonly alan (prev_x)
+		['readonly.vscene', '{"format":"vscene","version":1,"entities":[{"components":{"Transform":{"x":1,"prev_x":0}}}]}', '1009'],
+		// aralık dışı (Sprite.r ∈ [0,1])
+		['range.vscene', '{"format":"vscene","version":1,"entities":[{"components":{"Sprite":{"r":2}}}]}', '-32602'],
+		// dünya kapasitesi (test: 64)
+		['many.vscene', '{"format":"vscene","version":1,"entities":[${many.join(',')}]}', '1006'],
+	]
+	for c in cases {
+		path := write_scene_file(c[0], c[1])
+		reply := load_reply(mut s, path)
+		assert error_code(reply).str() == c[2], 'kod ${c[0]}: ${error_code(reply)}'
+		assert s.engine.state_hash() == before, 'dünya değişti: ${c[0]}'
+	}
+}
+
+fn test_load_error_data_names_entity_component_field() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	path := write_scene_file('ro.vscene', '{"format":"vscene","version":1,"entities":[{"components":{"Transform":{"x":1}}},{"components":{"Transform":{"x":1,"prev_y":0}}}]}')
+	data := pick(pick(load_reply(mut s, path), 'error'), 'data')
+	assert pick(data, 'entity_index').f64() == 1
+	assert pick(data, 'component').str() == 'Transform'
+	assert pick(data, 'field').str() == 'prev_y'
+}
+
+fn test_load_refused_while_recording() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	path := write_scene_file('rec.vscene', '{"format":"vscene","version":1,"entities":[]}')
+	scene_call(mut s, '{"jsonrpc":"2.0","id":1,"method":"record.start"}')
+	assert error_code(load_reply(mut s, path)) == code_record_state
+}
+
+fn test_load_clears_history() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	spawn_one(mut s)
+	path := write_scene_file('hist.vscene', '{"format":"vscene","version":1,"entities":[{"components":{"Transform":{"x":3}}}]}')
+	load_reply(mut s, path)
+	undo := scene_call(mut s, '{"jsonrpc":"2.0","id":5,"method":"history.undo"}')
+	assert pick(scene_result(undo), 'applied').as_bool() == false
+	assert s.engine.world.entities().high_water() == 1
+}
+
+fn test_load_accepts_bom_and_crlf() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	body := '{\r\n"format":"vscene",\r\n"version":1,\r\n"entities":[\r\n{"components":{"Transform":{"x":2,"y":"nan"}}}\r\n]\r\n}\r\n'
+	path := write_scene_file('bom.vscene', '\xef\xbb\xbf' + body)
+	reply := load_reply(mut s, path)
+	assert pick(scene_result(reply), 'entities').len() == 1
+	assert scene_text(s.world(), s.registry()).contains('"x":2')
+}
+
+// server_test.v'deki yardımcılar bu dosyada görünmez: aynı işi burada yapar.
+fn scene_call(mut s Server, line string) Val {
+	out := s.handle(line) or { panic('yanıt yok: ${line}') }
+	return parse(out) or { panic('yanıt JSON degil: ${out}') }
+}
+
+fn scene_result(v Val) Val {
+	return pick(v, 'result')
+}

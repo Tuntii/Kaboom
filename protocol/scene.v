@@ -122,6 +122,19 @@ pub fn scene_text(w &ecs.World, reg &ecs.Registry) string {
 	return b.str()
 }
 
+// Dosyayı okur ve UTF-8 BOM'unu atar; CRLF satır sonları cJSON için boşluktur.
+fn load_scene_text(path string) !string {
+	raw := winfile.read_file(path)!
+	defer {
+		unsafe { raw.free() }
+	}
+	mut from := 0
+	if raw.len >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF {
+		from = 3
+	}
+	return raw[from..].bytestr()
+}
+
 // Atomik yazım: önce <path>.tmp (yazılamazsa winfile tmp'yi siler), sonra yerine taşınır.
 // Taşıma başarısızsa tmp silinir; var olan path bu noktaya kadar dokunulmaz.
 fn save_scene_atomic(path string, text string) ! {

@@ -136,6 +136,11 @@ const command_docs = [
 		params: '{"path": string}'
 		result: '{"path", "entities": n, "bytes": n}; .vscene metni <path>.tmp üzerinden atomik olarak yazılır; hata io_error (1010) ve eski dosya yerinde kalır'
 	},
+	CommandDoc{
+		method: 'scene.load'
+		params: '{"path": string}'
+		result: '{"entities": [id, ...]}; dosya tamamen doğrulanır, sonra dünya sıfırlanıp kurulur ve geçmiş temizlenir; hata -32602 (data: entity_index, component, field), 1006, 1008 ya da io_error (1010); hiçbiri dünyayı değiştirmez'
+	},
 ]
 
 fn (mut s Server) entity_spawn(p Val) !Val {
@@ -152,13 +157,19 @@ fn (mut s Server) entity_spawn(p Val) !Val {
 			if !c.is_object() {
 				return invalid_params('components.${name} must be an object of field values')
 			}
-			mut pl := s.plan_component(name, c)!
+			mut pl := s.plan_component(name, c, false)!
 			s.seed_transform_prev(mut pl)
 			plans << pl
 		}
 		c = c.next()
 	}
-	// Spawn bir komut, her bileşen bir add, her alan bir set: hepsi kuyrukta sığmalı.
+	s.check_queue_slots(plans)!
+	e := s.spawn_planned(plans)!
+	return kv('entity', num(f64(u64(e))))
+}
+
+// Spawn bir komut, her bileşen bir add, her alan bir set: hepsi kuyrukta sığmalı.
+fn (s &Server) check_queue_slots(plans []Plan) ! {
 	mut need := u64(1)
 	for pl in plans {
 		need += u64(1 + pl.writes.len)
@@ -166,6 +177,11 @@ fn (mut s Server) entity_spawn(p Val) !Val {
 	if need > u64(s.cfg.queue_capacity) {
 		return rpc_error(code_queue_full, 'command queue is full', hint_data('spawn needs ${need} queue slots but queue_capacity is ${s.cfg.queue_capacity}; spawn fewer components or start the server with a larger queue_capacity'))
 	}
+}
+
+// Planları bir varlığa dönüştürür: önce spawn (id'yi alır), sonra her bileşen bir add, her alan bir set.
+// Çağıran kuyruk sığmasını check_queue_slots ile önceden denetler.
+fn (mut s Server) spawn_planned(plans []Plan) !ecs.EntityID {
 	s.commit([cmd.Command{
 		kind:   .spawn
 		source: s.source
@@ -196,7 +212,7 @@ fn (mut s Server) entity_spawn(p Val) !Val {
 	if cmds.len > 0 {
 		s.commit(cmds)!
 	}
-	return kv('entity', num(f64(u64(e))))
+	return e
 }
 
 fn (mut s Server) entity_despawn(p Val) !Val {
@@ -213,7 +229,7 @@ fn (mut s Server) component_add(p Val) !Val {
 	e := entity_param(p)!
 	name := string_param(p, 'component')!
 	values := object_param(p, 'values')!
-	plan := s.plan_component(name, values)!
+	plan := s.plan_component(name, values, false)!
 	defer {
 		unsafe { plan.writes.free() }
 	}
@@ -546,14 +562,140 @@ fn (s &Server) scene_save(p Val) !Val {
 	return res
 }
 
+// .vscene dosyasını yükler: önce tamamen doğrular, sonra dünyayı sıfırlayıp komutlarla kurar.
+// Doğrulama dünyaya dokunmaz; kurulum yalnız doğrulamadan sonra başlar.
+fn (mut s Server) scene_load(p Val) !Val {
+	path := string_param(p, 'path')!
+	text := load_scene_text(path) or {
+		return io_error(path, 'could not read file; check that the path exists and is readable, then retry scene.load')
+	}
+	doc := parse(text) or {
+		if exhausted() {
+			return invalid_params('scene file does not fit the request arena; start the server with a larger capacity')
+		}
+		return invalid_params('file is not valid JSON; check the file or save it again with scene.save')
+	}
+	ents := s.scene_validate(doc)!
+	if s.engine.recorder.is_active() {
+		return record_error('a recording is active; call record.stop before scene.load')
+	}
+	// Dünya sıfırlanır: tick 0, boş geçmiş ve editor_depth 0 (sim.reset ile aynı iç yol).
+	_ = s.sim_reset()!
+	out := arr()
+	for i in 0 .. ents.len() {
+		ent := ents.at(i) or { break }
+		plans := s.scene_entity_plans(ent, i)!
+		e := s.spawn_planned(plans) or {
+			free_plans(plans)
+			return err
+		}
+		free_plans(plans)
+		out.push(num(f64(u64(e))))
+	}
+	// Kurulum komutları geçmişe yazılmış olabilir: yüklenen sahne tek geri alma adımı değildir.
+	s.engine.history.clear()
+	res := obj()
+	res.set('entities', out)
+	return res
+}
+
+// Belgeyi doğrular ve varlık dizisini döner; dünyaya dokunmaz.
+fn (s &Server) scene_validate(doc Val) !Val {
+	if !doc.is_object() {
+		return invalid_params('scene must be a JSON object')
+	}
+	format := doc.get('format') or { null_val() }
+	if !format.is_string() || format.str() != 'vscene' {
+		return invalid_params('format must be "vscene"')
+	}
+	version := doc.get('version') or { null_val() }
+	if !version.is_number() || version.f64() != 1 {
+		return invalid_params('version must be 1')
+	}
+	ents := doc.get('entities') or { null_val() }
+	if !ents.is_array() {
+		return invalid_params('entities must be an array of entity objects')
+	}
+	if u64(ents.len()) > u64(s.cfg.capacity) {
+		return rpc_error(code_capacity_full, 'world capacity is full', hint_data('scene has ${ents.len()} entities but world capacity is ${s.cfg.capacity}; start the server with a larger capacity'))
+	}
+	for i in 0 .. ents.len() {
+		ent := ents.at(i) or { break }
+		plans := s.scene_entity_plans(ent, i)!
+		free_plans(plans)
+	}
+	return ents
+}
+
+// Tek varlığın planları; dünyaya dokunmaz. Hata, varlık indeksini ve (varsa) bileşen adını taşır.
+fn (s &Server) scene_entity_plans(ent Val, index int) ![]Plan {
+	comps := ent.get('components') or {
+		return scene_error(index, '', invalid_params('components is required: an object of component values'))
+	}
+	if !comps.is_object() {
+		return scene_error(index, '', invalid_params('components must be an object of component values'))
+	}
+	mut plans := []Plan{}
+	mut ok := false
+	defer {
+		if !ok {
+			free_plans(plans)
+		}
+	}
+	mut c := comps.first()
+	for !c.is_nil() {
+		name := c.key()
+		// Yinelenen anahtarda yalnız son değer geçerlidir (plan_component ile aynı).
+		if comps.is_last(c) {
+			if !c.is_object() {
+				return scene_error(index, name, invalid_params('components.${name} must be an object of field values'))
+			}
+			mut pl := s.plan_component(name, c, true) or { return scene_error(index, name, err) }
+			s.seed_transform_prev(mut pl)
+			plans << pl
+		}
+		c = c.next()
+	}
+	s.check_queue_slots(plans) or { return scene_error(index, '', err) }
+	ok = true
+	return plans
+}
+
+// Varlık indeksini hata verisine ekler; bileşen adı yoksa onu da ekler (yapısal hatalar için).
+fn scene_error(index int, name string, err IError) IError {
+	if err is RpcError {
+		d := err.data
+		d.set('entity_index', num(f64(index)))
+		if d.get('component') == none && name != '' {
+			d.set('component', str_val(name))
+		}
+		return rpc_error(err.err_code, err.message, d)
+	}
+	return err
+}
+
+// .vscene'de sonsuz ve NaN değerler metin olarak yazılır. "nan" sayıya çevrilir (f32 NaN olarak geçer);
+// "inf" ve "-inf" sonludan başka olduğu için sayıya çevrilince field_write reddeder.
+fn scene_value(v Val) Val {
+	if !v.is_string() {
+		return v
+	}
+	return match v.str() {
+		'nan' { num(math.nan()) }
+		'inf' { num(math.inf(1)) }
+		'-inf' { num(math.inf(-1)) }
+		else { v }
+	}
+}
+
 // Bileşen adini kayit id'sine çevirir; yoksa 1002.
 fn (s &Server) component_id(name string) !u16 {
 	return s.reg.find(name) or { return status_error(.unknown_component, kv('component', str_val(name))) }
 }
 
 // Değerleri doğrular ve dünyaya dokunmadan bir Plan uretir. Sıra: ad, alan adı, readonly, tip, değer.
-// Yinelenen anahtarda yalnız son değer alınır.
-fn (s &Server) plan_component(name string, values Val) !Plan {
+// Yinelenen anahtarda yalnız son değer alınır. scene_values: .vscene değerleri ("nan" gibi metinler) kabul edilir.
+fn (s &Server) plan_component(name string, values Val, scene_values bool) !Plan {
 	id := s.component_id(name)!
 	schema := s.reg.component(id) or {
 		return status_error(.unknown_component, kv('component', str_val(name)))
@@ -568,7 +710,8 @@ fn (s &Server) plan_component(name string, values Val) !Plan {
 	mut c := values.first()
 	for !c.is_nil() {
 		if values.is_last(c) {
-			writes << s.field_write(name, schema, c.key(), c)!
+			v := if scene_values { scene_value(c) } else { c }
+			writes << s.field_write(name, schema, c.key(), v)!
 		}
 		c = c.next()
 	}

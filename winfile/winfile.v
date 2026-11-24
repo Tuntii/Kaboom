@@ -12,6 +12,8 @@ fn C._fileno(stream voidptr) int
 fn C._commit(fd int) int
 fn C.MoveFileExW(existing &u16, new &u16, flags u32) bool
 fn C.DeleteFileW(name &u16) bool
+fn C.fread(ptr voidptr, size usize, n usize, stream voidptr) usize
+fn C.ferror(stream voidptr) int
 
 // Kapasite bir NUL için ayrılır: en uzun yol 1023 UTF-16 birimi.
 const max_path_units = 1023
@@ -52,6 +54,35 @@ pub fn write_file(path string, data []u8) ! {
 		C.DeleteFileW(&wpath[0])
 		return error('dosya diske yazılamadı')
 	}
+}
+
+// Dosyayı baştan sona okur; UTF-8 yol geniş API ile açılır (Türkçe yollar). Açılamazsa ya da okuma yarım kalırsa hata.
+pub fn read_file(path string) ![]u8 {
+	mut wpath := [1024]u16{}
+	wide_path(path, mut wpath)!
+	mut wmode := [3]u16{}
+	wmode[0] = u16(`r`)
+	wmode[1] = u16(`b`)
+	f := C._wfopen(&wpath[0], &wmode[0])
+	if f == unsafe { nil } {
+		return error('dosya açılamadı')
+	}
+	defer {
+		C.fclose(f)
+	}
+	mut data := []u8{}
+	mut chunk := [4096]u8{}
+	for {
+		n := C.fread(&chunk[0], 1, 4096, f)
+		if n == 0 {
+			break
+		}
+		data << chunk[..int(n)]
+	}
+	if C.ferror(f) != 0 {
+		return error('dosya okunamadı')
+	}
+	return data
 }
 
 // tmp dosyasını hedefin üzerine taşır (MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH = 0x9).
