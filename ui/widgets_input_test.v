@@ -62,6 +62,7 @@ mut:
 	tip     bool
 	last    NumberFieldResult
 	commits int
+	err     string
 }
 
 fn in_fmt(v f32, dec int) string {
@@ -1448,4 +1449,99 @@ fn test_typed_value_unclamped_with_drag_clamp() {
 	wgt_frame(mut c, in_key(.enter), body)
 	assert t.enter == 1
 	assert t.value == 5
+}
+
+// Reddedilen yazılı değer (reject): alan düzenleme modunda kalır, metin korunur, değer ve bildirim değişmez.
+fn test_number_field_reject_keeps_editing() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 0
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			min:    0
+			max:    1
+			reject: true
+			error:  tp.err
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	id := c.num_id
+	assert id != 0
+	nf_once(mut c, in_text('2'), body)
+	nf_once(mut c, in_key(.enter), body)
+	assert t.last.rejected
+	assert !t.last.committed
+	assert !t.last.changed
+	assert t.value == 0
+	assert c.num_id == id, 'reddedilen degerde duzenleme surmeli'
+	assert c.num_buf.str() == '2'
+	// Hata metni çağıran tarafından verildiğinde kenar danger ve metin düzenlemede kalır.
+	tp.err = 'Sprite.r must be in [0, 1]'
+	nf_once(mut c, Input{}, body)
+	assert c.num_id == id
+	assert nf_rects_with_border(c.list, u32(danger)) > 0
+	assert nf_glyphs_with(c.list, u32(text_primary)) > 0
+	// Esc düzenlemeyi bırakır, değer korunur, bildirim geri döner.
+	nf_once(mut c, in_key(.escape), body)
+	assert c.num_id == 0
+	assert t.last.escaped
+	assert t.value == 0
+}
+
+// Aralık dışı değerle odak kaybı: değer geri alınır, düzenleme biter, commit olmaz.
+fn test_number_field_reject_blur_reverts() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 0.5
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			min:    0
+			max:    1
+			reject: true
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	nf_once(mut c, in_text('7'), body)
+	nf_once(mut c, mouse_at(300, 200), body)
+	nf_once(mut c, press_at(300, 200), body)
+	nf_once(mut c, release_at(300, 200), body)
+	assert c.num_id == 0
+	assert !t.last.committed
+	assert !t.last.changed
+	assert t.value == 0.5
+}
+
+// Açılır menü yerleşince öğe metni text_primary ve tam opaklıkta (açılış soluklaşması bitmiş).
+fn test_menu_item_text_primary() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			c.menu_item('Body')
+			c.menu_end()
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(5, 5), 1000), body)
+	wgt_frame(mut c, timed(press_at(5, 5), 1000), body)
+	wgt_frame(mut c, timed(release_at(5, 5), 1000), body)
+	assert t.open
+	wgt_frame(mut c, timed(mouse_at(300, 200), 1200), body)
+	assert c.menu_alpha == 1
+	assert nf_glyphs_with(c.list, u32(text_primary)) > 0
+	assert nf_glyphs_with(c.list, u32(text_muted)) == 0
 }

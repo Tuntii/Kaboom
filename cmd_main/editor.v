@@ -226,7 +226,7 @@ fn run_editor(args []string) {
 
 		// Ekran görüntüsü kare sayısında alınır (stdin'den bağımsız). --screenshot-after-eof ile önce stdin EOF'u
 		// ve boşalmış kanal beklenir: o noktada tüm istekler işlenmiş ve yanıtları yazılmıştır.
-		if o.screenshot != '' && frame + 1 >= o.frames && (eof || !o.screenshot_after_eof) {
+		if o.screenshot != '' && frame + 1 >= o.frames && !script.running() && (eof || !o.screenshot_after_eof) {
 			// Ekran görüntüsü aynı kareyi FBO'ya çizer (gallery ile aynı yol); pencere hemen kapanır.
 			fbo.resize(fw, fh) or {
 				eprintln('vcore: ${err}')

@@ -211,6 +211,11 @@ fn test_out_of_range_shows_error_and_sends_nothing() {
 	assert ins_field_value(&srv, id, ecs.sprite_id, 'r') == 0
 	assert ins_undo_count(&srv) == undo0
 	// Geçerli bir yazılı değer hatayı temizler.
+	// Reddedilen değer düzenlemede kalır; Esc düzenlemeyi bırakır ve hatayı temizler.
+	ins_frame(mut c, mut e, mut srv, ins_key(x, y, .escape))
+	assert e.ins.err_text(ecs.EntityID(id), ecs.sprite_id, ri) == ''
+	assert ins_field_value(&srv, id, ecs.sprite_id, 'r') == 0
+	// Geçerli bir yazılı değer hatayı temizler.
 	ins_click(mut c, mut e, mut srv, x, y)
 	ins_frame(mut c, mut e, mut srv, ins_text(x, y, '0.5'))
 	ins_frame(mut c, mut e, mut srv, ins_key(x, y, .enter))
@@ -346,4 +351,31 @@ fn test_displayed_value_stays_in_range_during_long_drag() {
 	assert e.inspector_shown(ecs.sprite_id, ins_field_index(&srv, ecs.sprite_id, 'r')) or { panic('yok') } == 1
 	ins_frame(mut c, mut e, mut srv, ins_up(x, y))
 	assert ins_field_value(&srv, id, ecs.sprite_id, 'r') == 1
+}
+
+// Aralık hatası: alan düzenleme modunda kalır, yazılan metin korunur, hata görünür; Esc düzenlemeyi ve hatayı bırakır.
+fn test_rejected_value_stays_in_edit() {
+	mut srv := ins_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	id := ins_setup(mut c, mut e, mut srv)
+	r := ins_field_rect(&e, &c, &srv, ecs.sprite_id, 'r')
+	x := r.x + r.w / 2
+	y := r.y + r.h / 2
+	ri := ins_field_index(&srv, ecs.sprite_id, 'r')
+	ins_click(mut c, mut e, mut srv, x, y)
+	ins_frame(mut c, mut e, mut srv, ins_text(x, y, '2'))
+	ins_frame(mut c, mut e, mut srv, ins_key(x, y, .enter))
+	ins_frame(mut c, mut e, mut srv, ins_hover(x, y))
+	assert c.keyboard_captured(), 'reddedilen değerde alan düzenlemede kalmalı'
+	assert e.ins.err_text(ecs.EntityID(id), ecs.sprite_id, ri) == 'Sprite.r must be in [0, 1]'
+	assert ins_field_value(&srv, id, ecs.sprite_id, 'r') == 0
+	ins_frame(mut c, mut e, mut srv, ins_key(x, y, .escape))
+	assert !c.keyboard_captured(), 'Esc duzenlemeyi birakmali'
+	assert e.ins.err_text(ecs.EntityID(id), ecs.sprite_id, ri) == '', 'Esc hatayi temizlemeli'
+	assert ins_field_value(&srv, id, ecs.sprite_id, 'r') == 0
 }

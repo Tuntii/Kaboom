@@ -247,3 +247,121 @@ fn test_put_str_respects_utf8_boundary() {
 	assert n == 159, 'sınır geri çekilmeli: ${n}'
 	assert buf[158] == `a`
 }
+
+// Araç çubuğu yalnız dosya adını gösterir (yol ipucundadır); ayırıcı / ya da \ olabilir.
+fn test_toolbar_shows_basename() {
+	assert Editor.new('a/b/c.vscene').file_label() == 'c.vscene'
+	assert Editor.new('a\\b\\c.vscene').file_label() == 'c.vscene'
+	assert Editor.new('c.vscene').file_label() == 'c.vscene'
+	assert Editor.new('').file_label() == 'Yeni sahne'
+}
+
+// Sahne yüklenince kamera tüm spriteları %15 kenar boşluğuyla kadrajlar (bir kenar sınıra değer).
+fn test_frame_all_on_load() {
+	dir := os.temp_dir().replace('\\', '/')
+	path := '${dir}/vcore_m4c11_frame_${os.getpid()}.vscene'
+	defer {
+		os.rm(path) or {}
+	}
+	mut writer := edt_server()
+	for line in edt_sprite_lines() {
+		writer.handle(line) or { panic('yanit yok') }
+	}
+	writer.handle('{"jsonrpc":"2.0","id":9,"method":"scene.save","params":{"path":"${path}"}}') or { panic('yanit yok') }
+	writer.close()
+
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new(path)
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	fr := edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.load_error() == '', 'hata olmamali: ${e.load_error()}'
+	assert e.cam.view_h < cam_view_h, 'kamera yakinlasmali: ${e.cam.view_h}'
+	r := fr.scene
+	// Sprite ekran kutuları: dünya merkezi ± boyut/2, kamera ölçeğiyle.
+	k := e.cam.px_per_unit(r)
+	mut x0 := f32(1e9)
+	mut y0 := f32(1e9)
+	mut x1 := f32(-1e9)
+	mut y1 := f32(-1e9)
+	boxes := [[f32(-9), f32(-4), f32(3)], [f32(6), f32(5), f32(2)], [f32(0), f32(0), f32(1)]]
+	for s in boxes {
+		sx, sy := e.cam.world_to_screen(r, s[0], s[1])
+		h := s[2] * k / 2
+		x0 = if sx - h < x0 { sx - h } else { x0 }
+		x1 = if sx + h > x1 { sx + h } else { x1 }
+		y0 = if sy - h < y0 { sy - h } else { y0 }
+		y1 = if sy + h > y1 { sy + h } else { y1 }
+	}
+	m := f32(0.15)
+	assert x0 >= r.x + m * r.w - 1e-2 && x1 <= r.x + r.w - m * r.w + 1e-2, 'yatay tasma: ${x0}..${x1} sahne ${r}'
+	assert y0 >= r.y + m * r.h - 1e-2 && y1 <= r.y + r.h - m * r.h + 1e-2, 'dikey tasma: ${y0}..${y1} sahne ${r}'
+	touch := [x0 - (r.x + m * r.w), r.x + r.w - m * r.w - x1, y0 - (r.y + m * r.h), r.y + r.h - m * r.h - y1]
+	mut best := f32(1e9)
+	for t in touch {
+		if t < best {
+			best = t
+		}
+	}
+	assert best < 1.5, 'en az bir kenar %15 sinirinda olmali: ${touch}'
+}
+
+// F: seçiliyi (seçim yoksa hepsini) kadrajlar.
+fn test_f_frames_selection() {
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	for line in edt_sprite_lines() {
+		srv.handle(line) or { panic('yanit yok') }
+	}
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	// Seçim yok: tüm spriteların merkezi (-10.5..7, -5.5..6).
+	edt_frame(mut c, mut e, mut srv, edt_key(.f))
+	assert edt_close(e.cam.cx, -1.75) && edt_close(e.cam.cy, 0.25), 'hepsi kadrajlanmali: ${e.cam.cx},${e.cam.cy}'
+	// Seçim var: yalnız o sprite (merkez -9,-4; boyut 3).
+	first := srv.world().store(ecs.sprite_id).index_at(0)
+	e.sv.sel = srv.world().entities().handle_at(first)
+	edt_frame(mut c, mut e, mut srv, edt_key(.f))
+	assert edt_close(e.cam.cx, -9) && edt_close(e.cam.cy, -4), 'secili kadrajlanmali: ${e.cam.cx},${e.cam.cy}'
+	assert e.cam.view_h < 6, 'secili sprite yakinlasmali: ${e.cam.view_h}'
+}
+
+fn edt_close(a f32, b f32) bool {
+	d := if a > b { a - b } else { b - a }
+	return d < 1e-3
+}
+
+// Üç sprite (Transform + Sprite): (-9,-4,3), (6,5,2), (0,0,1).
+fn edt_sprite_lines() []string {
+	return [
+		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":-9,"y":-4},"Sprite":{"size":3}}}}',
+		'{"jsonrpc":"2.0","id":2,"method":"entity.spawn","params":{"components":{"Transform":{"x":6,"y":5},"Sprite":{"size":2}}}}',
+		'{"jsonrpc":"2.0","id":3,"method":"entity.spawn","params":{"components":{"Transform":{"x":0,"y":0},"Sprite":{"size":1}}}}',
+	]
+}
+
+// Uzun ad: ad kutusu en çok ui.file_name_max_w genişlikte (sonu … ile kırpılmış) çizilir.
+fn test_toolbar_truncates_long_name() {
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	long := 'a'.repeat(160) + '.vscene'
+	mut e := Editor.new('docs/' + long)
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	r := c.last_rect('file_name') or { panic('ad kutusu yok') }
+	assert r.w <= ui.file_name_max_w + 1e-3, 'ad kutusu genisligi: ${r.w}'
+	assert r.w > 0
+}

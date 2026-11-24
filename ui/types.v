@@ -50,6 +50,7 @@ pub enum Key {
 	f5
 	f6
 	f10
+	f
 }
 
 // Mantıksal piksel; buton 0 sol, 1 sağ, 2 orta.

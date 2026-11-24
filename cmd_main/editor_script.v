@@ -15,12 +15,15 @@ const script_click_frames = 3
 const script_warm_frames = 2
 // Son adımdan sonra bir kare: son değişikliğin çizimi.
 const script_settle_frames = 2
+// Açılır menü açılışı (ui.motion_ms) bitene dek beklenir: ekran görüntüsü soluk menü göstermez.
+const script_menu_settle_ms = f64(200)
 
 enum EditorStepKind {
 	select_row // N. satırdaki varlığın (Transform sırası) sahnedeki noktası
 	click      // etiketli düğme (last_rect)
 	field      // Sprite.r sayı kutusu
 	add_menu   // Bileşen ekle düğmesi (inspektör kapsamında)
+	settle     // zamana bağlı bekleme: menü açılış animasyonu bitsin
 	type_text  // metin girdisi (bir kare)
 	enter      // Enter tuşu (bir kare)
 }
@@ -40,6 +43,7 @@ mut:
 	warm  int
 	mx    f32 = -1 // son hedef (metin ve Enter bu noktada yazılır)
 	my    f32 = -1
+	t0    f64 = -1 // settle adımının başladığı zaman (ms); -1: henüz başlamadı
 }
 
 // Senaryo kurulur: seçim (--select, ya da --open-menu/--bad-value için 0), sonra istenen eylemler.
@@ -72,6 +76,9 @@ fn editor_script_from(o EditorOpts) EditorScript {
 	if o.open_menu {
 		steps << EditorStep{
 			kind: .add_menu
+		}
+		steps << EditorStep{
+			kind: .settle
 		}
 	}
 	if o.bad_value {
@@ -125,6 +132,14 @@ fn (mut s EditorScript) input(c &ui.Context, ed &editor.Editor, srv &protocol.Se
 	}
 	st := s.steps[s.cur]
 	match st.kind {
+		.settle {
+			if s.t0 < 0 {
+				s.t0 = now
+			}
+			if now - s.t0 >= script_menu_settle_ms {
+				s.advance_step()
+			}
+		}
 		.type_text {
 			for i, ch in st.text {
 				inp.chars[i] = u32(ch)

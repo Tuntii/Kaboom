@@ -271,3 +271,33 @@ fn test_esc_overflow_restores_value_and_notes() {
 	assert u1 == u0 && r1 == r0, 'taşan grup yığına girmez: ${u0},${r0} → ${u1},${r1}'
 	assert e.note_text().contains('geri alma geçmişi doldu'), 'bildirim: ${e.note_text()}'
 }
+
+// Seçili varlık: orta kare 10 px, uç tutamakları 8 px, eksen çizgisi 2 px; seçim çerçevesinin dış hale kenarları var.
+fn test_gizmo_handles_drawn() {
+	mut srv := sv_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	r := sv_warm(mut c, mut e, mut srv)
+	id := sv_spawn(mut srv, 0, 0, 4)
+	sx, sy := sv_at(&e, r, 0, 0)
+	sv_click(mut c, mut e, mut srv, sx, sy)
+	assert sv_sel(&e) == id
+	sv_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	mid := c.last_rect('gz_c') or { panic('orta tutamaç çizilmedi') }
+	assert mid.w == 10 && mid.h == 10, 'orta kare 10 px: ${mid}'
+	xt := c.last_rect('gz_x_tip') or { panic('X uç tutamacı yok') }
+	assert xt.w == 8 && xt.h == 8, 'uc 8 px: ${xt}'
+	yt := c.last_rect('gz_y_tip') or { panic('Y uç tutamacı yok') }
+	assert yt.w == 8 && yt.h == 8, 'uc 8 px: ${yt}'
+	xv := c.last_rect('gz_x_vis') or { panic('X ekseni yok') }
+	assert xv.h == 2, 'eksen cizgisi 2 px: ${xv}'
+	yv := c.last_rect('gz_y_vis') or { panic('Y ekseni yok') }
+	assert yv.w == 2, 'eksen cizgisi 2 px: ${yv}'
+	halo := c.last_rect('sel_h_t') or { panic('seçim hale kenarı yok') }
+	sel := c.last_rect('sel_t') or { panic('seçim çerçevesi yok') }
+	assert halo.y == sel.y + 1, 'hale accent halkasinin 1 px icinde: ${halo} ${sel}'
+}

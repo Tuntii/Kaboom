@@ -350,6 +350,14 @@ fn (mut c Context) end_num(id u32) {
 	}
 }
 
+// Aralık denetimi: min == max == 0 sınırsız (num_clamp ile aynı kural).
+fn num_in_range(v f32, min f32, max f32) bool {
+	if min == 0 && max == 0 {
+		return true
+	}
+	return v >= min && v <= max
+}
+
 // min == max == 0 sınırsız.
 fn num_clamp(v f32, min f32, max f32) f32 {
 	if min == 0 && max == 0 {
@@ -435,6 +443,8 @@ pub mut:
 	drag_ended     bool // sürükleme normal bitti (fare bırakıldı)
 	drag_cancelled bool // sürükleme sırasında Esc: değer sürükleme başlangıcına döndü
 	committed      bool // yazılı düzenleme Enter ya da odak kaybıyla uygulandı
+	rejected       bool // Enter'da aralık dışı yazılı değer (reject): düzenlemede kalındı, değer değişmedi
+	escaped        bool // Esc ile düzenleme bırakıldı ya da aralık dışı değerle odak kaybı: bekleyen hata temizlenmeli
 }
 
 // Sayı alanı seçenekleri. min == max == 0 sınırsız; error doluysa alan danger kenarlıkla ve altında hata satırıyla çizilir.
@@ -452,6 +462,8 @@ pub:
 	drag_clamp bool
 	drag_min   f32
 	drag_max   f32
+	// reject: yazılı değer [min, max] dışındaysa Enter onu uygulamaz; alan düzenlemede kalır (rejected). min/max verilmelidir.
+	reject bool
 }
 
 // Sayı alanı: yatay sürükleme değeri değiştirir; tıklayıp bırakma düzenleme moduna geçer.
@@ -518,12 +530,23 @@ pub fn (mut c Context) number_field_ex(label string, mut value &f32, o NumberFie
 		c.num_cur = nc
 		// Enter, Esc ya da odak kaybı düzenlemeyi bitirir; Esc değeri değiştirmez.
 		if e.enter || !it.focused {
+			mut keep := false
 			if nv := parse_f32(c.num_buf.str()) {
-				v = num_clamp(nv, o.min, o.max)
-				r.committed = true
+				if o.reject && !num_in_range(nv, o.min, o.max) {
+					// Enter ile reddedilen değer düzenlemede kalır (metin korunur); odak kaybında Esc gibi atılır.
+					keep = it.focused
+					r.rejected = keep
+					r.escaped = !keep
+				} else {
+					v = num_clamp(nv, o.min, o.max)
+					r.committed = true
+				}
 			}
-			c.end_num(id)
+			if !keep {
+				c.end_num(id)
+			}
 		} else if e.esc {
+			r.escaped = true
 			c.end_num(id)
 		}
 	}

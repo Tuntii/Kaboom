@@ -234,6 +234,9 @@ fn (mut e Editor) field_row(mut c ui.Context, mut srv protocol.Server, w &ecs.Wo
 	cur := read_f32(w, id, comp, fi) or { return }
 	mut v := cur
 	c.property_row_begin(f.name)
+	// Aralıklı alan: yazılı değer [min, max] dışındaysa reddedilir (alan düzenlemede kalır).
+	lo := if f.ranged { f32(f.min) } else { f32(0) }
+	hi := if f.ranged { f32(f.max) } else { f32(0) }
 	res := c.number_field_ex(f.name, mut &v, ui.NumberFieldOpts{
 		unit:     f.unit
 		decimals: 2
@@ -243,9 +246,17 @@ fn (mut e Editor) field_row(mut c ui.Context, mut srv protocol.Server, w &ecs.Wo
 		drag_clamp: f.ranged
 		drag_min:   f32(f.min)
 		drag_max:   f32(f.max)
+		min:        lo
+		max:        hi
+		reject:     f.ranged
 	})
 	c.property_row_end()
 	e.ins.hit(hit_field, comp, fi, c.id(f.name), v)
+	if res.rejected {
+		e.ins.set_range_err(id, comp, fi, cname, f)
+	} else if res.escaped {
+		e.ins.clear_err(id, comp, fi)
+	}
 	if res.drag_started {
 		srv.history_begin_group()
 		e.ins.grouping = true
@@ -256,7 +267,7 @@ fn (mut e Editor) field_row(mut c ui.Context, mut srv protocol.Server, w &ecs.Wo
 	if res.drag_cancelled {
 		e.cancel_drag(mut srv, id, cname, f, v)
 	} else if res.changed || res.committed {
-		e.commit_field(mut srv, id, comp, cname, fi, f, cur, v, res.committed)
+		e.commit_field(mut srv, id, comp, cname, fi, f, cur, v)
 	}
 	if res.drag_ended && e.ins.grouping {
 		srv.history_end_group()
@@ -264,18 +275,14 @@ fn (mut e Editor) field_row(mut c ui.Context, mut srv protocol.Server, w &ecs.Wo
 	}
 }
 
-// Yazım: yazılı değer aralık dışıysa gönderilmez ve hata yazılır; sürüklemede değer kenara kıstırılır.
+// Yazım: sürüklemede değer kenara kıstırılır (yazılı değer widget'ta reddedilir, buraya aralık dışı gelmez).
 // Başarılı yazımda alanın hatası temizlenir.
-fn (mut e Editor) commit_field(mut srv protocol.Server, id ecs.EntityID, comp u16, cname string, fi u16, f ecs.FieldSchema, cur f32, v f32, typed bool) {
+fn (mut e Editor) commit_field(mut srv protocol.Server, id ecs.EntityID, comp u16, cname string, fi u16, f ecs.FieldSchema, cur f32, v f32) {
 	mut out := v
 	if f.ranged {
 		lo := f32(f.min)
 		hi := f32(f.max)
 		if out < lo || out > hi {
-			if typed {
-				e.ins.set_range_err(id, comp, fi, cname, f)
-				return
-			}
 			out = if out < lo { lo } else { hi }
 		}
 	}

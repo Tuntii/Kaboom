@@ -24,6 +24,7 @@ fn vk_to_key(vk u16) ui.Key {
 		0x5A { .z }
 		0x74 { .f5 }
 		0x75 { .f6 }
+		0x46 { .f }
 		0x79 { .f10 }
 		else { .none }
 	}

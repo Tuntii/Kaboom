@@ -39,3 +39,30 @@ fn test_editor_script_inactive_without_flags() {
 	assert !s.active()
 	assert !s.running()
 }
+
+// Açılır menü senaryosu: settle adımı menü animasyonu kadar zamana bağlı bekler, sonra senaryo biter.
+fn test_editor_script_menu_settles_by_time() {
+	mut s := editor_script_from(EditorOpts{ open_menu: true })
+	mut srv := protocol.Server.new(sim.Config{ capacity: 64, queue_capacity: 64, record_capacity: 1024 }) or {
+		panic(err)
+	}
+	defer {
+		srv.close()
+	}
+	resp := srv.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":0,"y":0},"Sprite":{"size":2}}}}') or {
+		panic('yanit yok')
+	}
+	assert protocol.response_ok(resp)
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := editor.Editor.new('')
+	mut t := f64(0)
+	mut calls := 0
+	for s.running() {
+		_ = s.input(&c, &e, &srv, editor.EditorFrame{}, t)
+		t += 10
+		calls++
+		assert calls <= 200, 'senaryo sonsuz döngüde'
+	}
+	assert t >= script_menu_settle_ms, 'settle en az ${script_menu_settle_ms} ms sürmeli: ${t}'
+}

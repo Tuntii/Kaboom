@@ -54,6 +54,7 @@ mut:
 	flash      [status_cap]u8
 	flash_len  int
 	flash_until f64
+	fit_pending bool // yükleme sonrası: sahne dikdörtgeni bilindiğinde tüm sprite'lar kadrajlanır
 }
 
 // Yeni editör: panel genişlikleri 240/300, kamera 0,0 görünüm yüksekliği 40, seçim yok.
@@ -95,6 +96,7 @@ fn (mut e Editor) load_scene(mut srv protocol.Server) {
 		return
 	}
 	e.saved_count = srv.change_count()
+	e.fit_pending = true
 }
 
 // Hata satırı (kırmızı durum metni): yüklemeden bağımsız kurulum hataları da buradan gösterilir.
@@ -168,6 +170,12 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 	if c.shortcut(.f10) {
 		e.step(mut srv)
 	}
+	// F: seçiliyi kadrajlar; seçim yoksa hepsini.
+	if scene.w > 0 && scene.h > 0 && c.shortcut(.f) {
+		if !e.frame_selected(srv.world(), scene) {
+			e.frame_all(srv.world(), scene)
+		}
+	}
 	e.format_status(srv)
 	c.statusbar_begin()
 	flash := e.flash_text()
@@ -216,11 +224,18 @@ fn (mut e Editor) toolbar(mut c ui.Context, mut srv protocol.Server) {
 	c.toolbar_end()
 }
 
+// Araç çubuğunda görünen ad: yolun son bileşeni (ayırıcı / ya da \ sonrası); tam yol ipucundadır.
 fn (e &Editor) file_label() string {
 	if e.path.len == 0 {
 		return 'Yeni sahne'
 	}
-	return e.path.str()
+	mut at := 0
+	for i in 0 .. e.path.len {
+		if e.path.data[i] == `/` || e.path.data[i] == `\\` {
+			at = i + 1
+		}
+	}
+	return unsafe { tos(&e.path.data[at], e.path.len - at) }
 }
 
 // Gövde: sol panel, sahne alanı ve sağ panel; ayırıcılar genişlikleri değiştirir.

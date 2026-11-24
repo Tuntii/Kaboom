@@ -24,3 +24,7 @@ fn test_vk_mapping_and_scale() {
 	assert in1.char_count == 1
 	assert in1.chars[0] == u32(0x61)
 }
+
+fn test_vk_f_maps_to_frame_key() {
+	assert vk_to_key(u16(0x46)) == ui.Key.f
+}

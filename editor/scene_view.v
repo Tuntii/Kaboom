@@ -12,7 +12,8 @@ import ui
 const gizmo_len = f32(64)
 const gizmo_thick = f32(2)
 const gizmo_band = f32(10)
-const gizmo_center = f32(12)
+const gizmo_center = f32(10)
+const gizmo_tip = f32(8) // eksen ucundaki dolu kare
 const outline_w = f32(1)
 
 enum SceneMode {
@@ -156,6 +157,11 @@ pub fn (mut e Editor) scene_view(mut c ui.Context, mut srv protocol.Server, r ui
 		e.leave_drag(mut srv)
 		return
 	}
+	// Yükleme sonrası kadraj: sahne dikdörtgeni bilindiği ilk karede bir kez.
+	if e.fit_pending {
+		e.fit_pending = false
+		e.frame_all(w, r)
+	}
 	has_sel, sel_id := e.sv.selected()
 	mut has_tf := false
 	mut tx := f32(0)
@@ -266,8 +272,65 @@ pub fn (mut e Editor) scene_view(mut c ui.Context, mut srv protocol.Server, r ui
 		if sz := read_f32(w, sel_id, ecs.sprite_id, e.sv.fields.sz) {
 			e.outline_overlays(mut c, r, ox, oy, sz)
 		}
-		e.gizmo_overlays(mut c, r, ox, oy)
+		e.gizmo_overlays(mut c, r, ox, oy, it_x.hovered, it_y.hovered, it_c.hovered)
 	}
+}
+
+// Tüm sprite'ların dünya kutusu (merkez ± boyut/2); sprite yoksa ok false. Yalnız okuma.
+fn sprite_box(w &ecs.World, f SceneFields) (bool, f32, f32, f32, f32) {
+	sp := w.store(ecs.sprite_id)
+	tf := w.store(ecs.transform_id)
+	xs := tf.column_f32(f.tx)
+	ys := tf.column_f32(f.ty)
+	zs := sp.column_f32(f.sz)
+	mut ok := false
+	mut x0 := f32(0)
+	mut y0 := f32(0)
+	mut x1 := f32(0)
+	mut y1 := f32(0)
+	for row in 0 .. sp.len() {
+		idx := sp.index_at(row)
+		trow := tf.row_of(idx) or { continue }
+		half := unsafe { zs[row] } / 2
+		x := unsafe { xs[trow] }
+		y := unsafe { ys[trow] }
+		if !ok {
+			x0 = x - half
+			x1 = x + half
+			y0 = y - half
+			y1 = y + half
+			ok = true
+		} else {
+			x0 = if x - half < x0 { x - half } else { x0 }
+			x1 = if x + half > x1 { x + half } else { x1 }
+			y0 = if y - half < y0 { y - half } else { y0 }
+			y1 = if y + half > y1 { y + half } else { y1 }
+		}
+	}
+	return ok, x0, y0, x1, y1
+}
+
+// Kadraj (F tuşu ve yükleme): tüm sprite'lar. Sprite yoksa kamera değişmez.
+fn (mut e Editor) frame_all(w &ecs.World, r ui.Rect) {
+	ok, x0, y0, x1, y1 := sprite_box(w, e.sv.fields)
+	if ok {
+		e.cam.frame_box(r, x0, y0, x1, y1)
+	}
+}
+
+// Kadraj (F tuşu): seçili varlığın sprite kutusu (sprite yoksa konumu). Seçim yoksa false: çağıran tümünü kadrajlar.
+fn (mut e Editor) frame_selected(w &ecs.World, r ui.Rect) bool {
+	has, id := e.sv.selected()
+	if !has {
+		return false
+	}
+	ok, x, y := read_pos(w, id, e.sv.fields)
+	if !ok {
+		return false
+	}
+	half := (read_f32(w, id, ecs.sprite_id, e.sv.fields.sz) or { f32(0) }) / 2
+	e.cam.frame_box(r, x - half, y - half, x + half, y + half)
+	return true
 }
 
 // Taşıma (gizmo): başlangıç değeri + basış konumundan dünya deltası; yalnız tutulan eksenler yazılır.
@@ -324,24 +387,42 @@ fn (mut e Editor) leave_drag(mut srv protocol.Server) {
 	e.sv.mode = .idle
 }
 
-// Seçim çerçevesi: sprite'ın dünya kutusunun 1 px accent kenarları; sahne dışına taşan kısım kırpılır.
+// Seçim çerçevesi: sprite'ın hemen dışında 1 px koyu (surface_0) hale, onun dışında 1 px accent halkası. Hale accent'i
+// aynı renkli sprite'tan ayırır; accent halkası koyu zeminde her sprite renginin çevresinde görünür. Kırpılan kısım sahneye taşmaz.
 fn (e &Editor) outline_overlays(mut c ui.Context, r ui.Rect, ox f32, oy f32, sz f32) {
 	k := e.cam.px_per_unit(r)
 	side := sz * k
 	left := ox - side / 2
 	top := oy - side / 2
-	rect_overlay(mut c, 'sel_t', ui.Rect{ x: left, y: top, w: side, h: outline_w }, r, ui.accent)
-	rect_overlay(mut c, 'sel_b', ui.Rect{ x: left, y: top + side - outline_w, w: side, h: outline_w }, r, ui.accent)
-	rect_overlay(mut c, 'sel_l', ui.Rect{ x: left, y: top, w: outline_w, h: side }, r, ui.accent)
-	rect_overlay(mut c, 'sel_r', ui.Rect{ x: left + side - outline_w, y: top, w: outline_w, h: side }, r, ui.accent)
+	// Hale: sprite kutusunun 1 px dışı.
+	rect_overlay(mut c, 'sel_h_t', ui.Rect{ x: left - outline_w, y: top - outline_w, w: side + 2 * outline_w, h: outline_w }, r, ui.surface_0)
+	rect_overlay(mut c, 'sel_h_b', ui.Rect{ x: left - outline_w, y: top + side, w: side + 2 * outline_w, h: outline_w }, r, ui.surface_0)
+	rect_overlay(mut c, 'sel_h_l', ui.Rect{ x: left - outline_w, y: top, w: outline_w, h: side }, r, ui.surface_0)
+	rect_overlay(mut c, 'sel_h_r', ui.Rect{ x: left + side, y: top, w: outline_w, h: side }, r, ui.surface_0)
+	// Accent halkası: halenin 1 px dışı.
+	ax := left - 2 * outline_w
+	ay := top - 2 * outline_w
+	aw := side + 4 * outline_w
+	rect_overlay(mut c, 'sel_t', ui.Rect{ x: ax, y: ay, w: aw, h: outline_w }, r, ui.accent)
+	rect_overlay(mut c, 'sel_b', ui.Rect{ x: ax, y: ay + aw - outline_w, w: aw, h: outline_w }, r, ui.accent)
+	rect_overlay(mut c, 'sel_l', ui.Rect{ x: ax, y: ay, w: outline_w, h: aw }, r, ui.accent)
+	rect_overlay(mut c, 'sel_r', ui.Rect{ x: ax + aw - outline_w, y: ay, w: outline_w, h: aw }, r, ui.accent)
 }
 
-// Gizmo: X kolu sağa, Y kolu yukarı (ekran y aşağı), ortada serbest kare. Tutma bandı görünen kolun üstünde.
-fn (mut e Editor) gizmo_overlays(mut c ui.Context, r ui.Rect, ox f32, oy f32) {
+// Gizmo: X kolu sağa, Y kolu yukarı (ekran y aşağı). Eksen çizgisi 2 px, ucunda 8 px dolu kare (eksen rengi, hover'da
+// açılır); ortada 10 px kare (yüzey dolgusu, 1 px text_primary kenar). Tutma bandı görünen kolun üstünde.
+fn (e &Editor) gizmo_overlays(mut c ui.Context, r ui.Rect, ox f32, oy f32, hx bool, hy bool, hc bool) {
 	half := gizmo_center / 2
+	tip := gizmo_tip / 2
 	rect_overlay(mut c, 'gz_x_vis', ui.Rect{ x: ox + half, y: oy - gizmo_thick / 2, w: gizmo_len - half, h: gizmo_thick }, r, ui.axis_x)
-	rect_overlay(mut c, 'gz_x', ui.Rect{ x: ox + half, y: oy - gizmo_band / 2, w: gizmo_len - half, h: gizmo_band }, r, ui.Color(0))
+	rect_overlay(mut c, 'gz_x_tip', ui.Rect{ x: ox + gizmo_len - tip, y: oy - tip, w: gizmo_tip, h: gizmo_tip }, r, if hx { ui.axis_x_hover } else { ui.axis_x })
+	rect_overlay(mut c, 'gz_x', ui.Rect{ x: ox + half, y: oy - gizmo_band / 2, w: gizmo_len - half + tip, h: gizmo_band }, r, ui.Color(0))
 	rect_overlay(mut c, 'gz_y_vis', ui.Rect{ x: ox - gizmo_thick / 2, y: oy - gizmo_len, w: gizmo_thick, h: gizmo_len - half }, r, ui.axis_y)
-	rect_overlay(mut c, 'gz_y', ui.Rect{ x: ox - gizmo_band / 2, y: oy - gizmo_len, w: gizmo_band, h: gizmo_len - half }, r, ui.Color(0))
-	rect_overlay(mut c, 'gz_c', ui.Rect{ x: ox - half, y: oy - half, w: gizmo_center, h: gizmo_center }, r, ui.text_secondary)
+	rect_overlay(mut c, 'gz_y_tip', ui.Rect{ x: ox - tip, y: oy - gizmo_len - tip, w: gizmo_tip, h: gizmo_tip }, r, if hy { ui.axis_y_hover } else { ui.axis_y })
+	rect_overlay(mut c, 'gz_y', ui.Rect{ x: ox - gizmo_band / 2, y: oy - gizmo_len - tip, w: gizmo_band, h: gizmo_len - half + tip }, r, ui.Color(0))
+	rect_overlay(mut c, 'gz_c', ui.Rect{ x: ox - half, y: oy - half, w: gizmo_center, h: gizmo_center }, r, if hc { ui.surface_hover } else { ui.surface_2 })
+	rect_overlay(mut c, 'gz_c_t', ui.Rect{ x: ox - half, y: oy - half, w: gizmo_center, h: outline_w }, r, ui.text_primary)
+	rect_overlay(mut c, 'gz_c_b', ui.Rect{ x: ox - half, y: oy + half - outline_w, w: gizmo_center, h: outline_w }, r, ui.text_primary)
+	rect_overlay(mut c, 'gz_c_l', ui.Rect{ x: ox - half, y: oy - half, w: outline_w, h: gizmo_center }, r, ui.text_primary)
+	rect_overlay(mut c, 'gz_c_r', ui.Rect{ x: ox + half - outline_w, y: oy - half, w: outline_w, h: gizmo_center }, r, ui.text_primary)
 }

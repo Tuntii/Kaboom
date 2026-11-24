@@ -127,6 +127,7 @@ fn (mut e Editor) open_path(mut srv protocol.Server, path string) bool {
 	e.cam.cx = 0
 	e.cam.cy = 0
 	e.cam.view_h = cam_view_h
+	e.fit_pending = true
 	e.file_field = .idle
 	e.confirm = .idle
 	return true
@@ -289,7 +290,16 @@ fn (mut e Editor) file_bar(mut c ui.Context, mut srv protocol.Server) {
 	if e.dirty(srv.change_count()) {
 		c.text('•', .body_strong, ui.warning)
 	}
-	c.text(e.file_label(), .body_strong, ui.text_primary)
+	// Ad kutusu: uzun ad … ile kırpılır; tam yol ipucunda (ad kutusunun üstünde bekleyince).
+	c.open('file_name', ui.Box{
+		width:  ui.fit()
+		height: ui.fit()
+	})
+	c.text_trunc(e.file_label(), .body_strong, ui.text_primary, ui.file_name_max_w)
+	c.close()
+	if e.path.len > 0 {
+		c.tooltip(e.path.str())
+	}
 	if e.file_field != .idle {
 		if e.focus_next {
 			c.focus_label('Yol')
