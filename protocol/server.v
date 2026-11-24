@@ -2,6 +2,7 @@ module protocol
 
 import sim
 import ecs
+import cmd
 import memory
 
 // İstek arenasının boyutu: her istek bu bölgede ayrıştırılır ve yanıtlanır. Taban 4 MiB; büyük kapasitede
@@ -59,6 +60,11 @@ mut:
 	req_region &u8
 	engine     sim.Sim
 	is_paused  bool
+	// İsteğin kaynağı (agent: stdin, editor: süreç içi); handle_from istek boyunca ayarlar.
+	source cmd.Source
+	// Açık editör grubu derinliği (history_begin_group ile); >0 iken geri al/yinele reddedilir.
+	// Motor geçmişi yeniden kurulduğunda (sim.reset) sıfırlanır: iki kaynak tek sayaç olarak kalır.
+	editor_depth u32
 	// Ekran görüntüsü kancası: yalnız pencere varken (vcore run) kurulur.
 	capture ?fn (path string) !(int, int)
 }
@@ -85,12 +91,14 @@ pub fn Server.new(cfg sim.Config) !Server {
 		region:     region
 		req_region: req_region
 		engine:     engine
+		source:     .agent
 	}
 }
 
 // Bölgeleri serbest birakir. Sonrasindaki istekler yapilandirilmis hata döner.
 pub fn (mut s Server) close() {
 	if s.region != unsafe { nil } {
+		s.engine.free()
 		_ = memory.release(s.region)
 		s.region = unsafe { nil }
 	}
@@ -134,6 +142,16 @@ pub fn (mut s Server) set_capture(f fn (path string) !(int, int)) {
 // yanıt bir sonraki handle çağrısına kadar geçerlidir; kalıcı tutulacaksa çağıran kopyalamalıdır.
 // Arena dolarsa yanıt, arenaya ihtiyaç duymayan sabit bir -32600 satırıdır.
 pub fn (mut s Server) handle(line string) ?string {
+	return s.handle_from(line, .agent)
+}
+
+// handle ile aynı, ama istek ürettiği komutları verilen kaynakla etiketler (editör süreç içinden .editor gönderir).
+pub fn (mut s Server) handle_from(line string, source cmd.Source) ?string {
+	prev := s.source
+	s.source = source
+	defer {
+		s.source = prev
+	}
 	text := trim_view(line)
 	if text == '' {
 		return none
@@ -142,6 +160,11 @@ pub fn (mut s Server) handle(line string) ?string {
 	// Bildirimler de bu satırı alır; kapalı sunucuda id okunamadığı için bilinçli bir sapmadır.
 	if s.region == unsafe { nil } {
 		return closed_line
+	}
+	// Her istek bir geçmiş grubudur; açık editör grubu varsa istek onun içine düşer (derinlik sayılır).
+	s.engine.history.begin_group()
+	defer {
+		s.engine.history.end_group()
 	}
 	arena_reset()
 	// Ayrıştırıcı özyinelemelidir ve NUL ile kesilen metinleri (strlen görünümü) kabul etmez:
@@ -228,9 +251,13 @@ fn (mut s Server) dispatch(method string, p Val) !Val {
 		'sim.pause' { return s.sim_pause() }
 		'sim.resume' { return s.sim_resume() }
 		'capture.screenshot' { return s.capture_screenshot(p) }
+		'history.undo' { return s.history_undo() }
+		'history.redo' { return s.history_redo() }
 		'record.start' { return s.record_start() }
 		'record.stop' { return s.record_stop(p) }
 		'replay.run' { return s.replay_run(p) }
+		'scene.save' { return s.scene_save(p) }
+		'scene.load' { return s.scene_load(p) }
 		else {}
 	}
 

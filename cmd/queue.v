@@ -48,7 +48,7 @@ pub fn (mut q CommandQueue) push(c Command) bool {
 }
 
 // Tüm kuyruğu kaynak sınıfı sırasıyla uygular; ok olanları kayda yazar. Bu kuyruk için ikinci çağrı 0 döner.
-pub fn (mut q CommandQueue) flush(mut w ecs.World, tick u64, mut rec Recorder) u32 {
+pub fn (mut q CommandQueue) flush(mut w ecs.World, tick u64, mut rec Recorder, mut hist History) u32 {
 	if q.applied {
 		return 0
 	}
@@ -59,7 +59,12 @@ pub fn (mut q CommandQueue) flush(mut w ecs.World, tick u64, mut rec Recorder) u
 			if c.source != src {
 				continue
 			}
+			// Geçmiş ters bloğu uygulamadan önce hazırlar; script komutları geçmişe girmez.
+			if c.source != .script {
+				hist.capture_before(&w, c)
+			}
 			r := apply(mut w, c)
+			hist.commit_capture(r)
 			unsafe {
 				q.results[i] = r
 			}

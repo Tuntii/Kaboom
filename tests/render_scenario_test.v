@@ -71,6 +71,10 @@ fn test_render_scenario_screenshot() {
 	png := os.read_bytes(os.join_path(tmp, 'm3.png')) or { panic('m3.png okunamadi: ${err}') }
 	pw, ph, pixels := image.decode_png_stored(png) or { panic('PNG cozulemedi: ${err}') }
 	assert pw == w && ph == h, 'PNG boyutu ${pw}x${ph}, yanit ${w}x${h}'
+	// Yakalama opaktır: FBO alfası make_opaque ile 255'e çekilir.
+	for i := 3; i < pixels.len; i += 4 {
+		assert pixels[i] == 255, 'alfa 255 degil: ${pixels[i]} (piksel ${i / 4})'
+	}
 
 	view_w := f32(220) * f32(w) / f32(h)
 	red_x := int((f32(-50) + view_w / 2) / view_w * f32(w))

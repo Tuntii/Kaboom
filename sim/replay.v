@@ -25,9 +25,12 @@ pub fn replay(rec cmd.Recording, reg &ecs.Registry) !ReplayResult {
 		return error('replay ayrıştı: tick ${rec.end_tick}: bitiş son girdiden (tick ${prev}) önce')
 	}
 
+	// Replay kuyruk ve flush kullanmaz; geçmiş yalnızca Sim kurulumu için küçük ayrılır.
 	cfg := Config{
-		capacity:        rec.capacity
-		record_capacity: 1
+		capacity:         rec.capacity
+		record_capacity:  1
+		history_capacity: 1
+		history_groups:   1
 	}
 	need := cfg.bytes_needed(reg)
 	region := memory.reserve(need) or { return error('replay setup failed: region reservation failed (${need} bytes)') }

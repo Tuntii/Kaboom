@@ -3,7 +3,7 @@
 
 // GL 2.0+ fonksiyon işaretçileri. V modül globalleri -enable-globals ister; bu yüzden C static'lerinde.
 // Yuvalar gl.v içindeki slot_* sabitleriyle eşleşir; sınır denetimi yok.
-#define VCORE_GL_SLOTS 31
+#define VCORE_GL_SLOTS 40
 
 static void *vcore_gl_slots[VCORE_GL_SLOTS];
 // 1 yalnız her fonksiyon yüklendiğinde; kısmi yükleme durumu bırakılmaz.

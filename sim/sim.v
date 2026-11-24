@@ -14,6 +14,8 @@ pub:
 	capacity        u32 = 100_000
 	queue_capacity  u32 = 65_536
 	record_capacity u32 = 1_048_576
+	history_capacity u32 = 65_536
+	history_groups   u32 = 4_096
 }
 
 // Üst sınır: her tahsis en fazla 63 bayt hizalama boşluğu yer; tahsis başına 64 bayt bunu karşılar.
@@ -38,6 +40,8 @@ pub fn (c Config) bytes_needed(reg &ecs.Registry) u64 {
 	allocs += 2
 	total += u64(c.record_capacity) * u64(sizeof(cmd.RecordEntry))
 	allocs++
+	// Geçmiş kendi ayırma payını (7 tahsis) içinde hesaplar.
+	total += cmd.History.bytes_needed(reg, c.history_capacity, c.history_groups)
 	return total + allocs * 64
 }
 
@@ -47,6 +51,7 @@ pub mut:
 	world    ecs.World
 	queue    cmd.CommandQueue
 	recorder cmd.Recorder
+	history  cmd.History
 mut:
 	// Alan adı tick() metoduyla çakışmasın diye current_tick.
 	current_tick u64
@@ -82,10 +87,15 @@ pub fn Sim.new(mut parent memory.LinearArena, reg &ecs.Registry, cfg Config) ?Si
 		parent.rewind(m)
 		return none
 	}
+	history := cmd.History.new(mut parent, reg, cfg.history_capacity, cfg.history_groups) or {
+		parent.rewind(m)
+		return none
+	}
 	return Sim{
 		world:     world
 		queue:     queue
 		recorder:  recorder
+		history:   history
 		tr_x:      tr_x
 		tr_y:      tr_y
 		tr_prev_x: tr_prev_x
@@ -95,13 +105,18 @@ pub fn Sim.new(mut parent memory.LinearArena, reg &ecs.Registry, cfg Config) ?Si
 	}
 }
 
+// Motorun V heap'teki ayırmalarını (dünya bileşen dizisi) serbest bırakır; geri kalan bellek parent arenadadır.
+pub fn (mut s Sim) free() {
+	s.world.free()
+}
+
 pub fn (mut s Sim) push(c cmd.Command) bool {
 	return s.queue.push(c)
 }
 
 // Kuyruğu o anki tick numarasıyla uygular.
 pub fn (mut s Sim) flush() u32 {
-	return s.queue.flush(mut s.world, s.current_tick, mut s.recorder)
+	return s.queue.flush(mut s.world, s.current_tick, mut s.recorder, mut s.history)
 }
 
 // Sıra: komutlar, prev_* yazımı, hareket, tick++.

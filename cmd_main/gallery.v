@@ -144,7 +144,24 @@ fn script_mouse(ctx &ui.Context, mut inp ui.Input, o GalleryOpts, frame int) {
 	}
 }
 
+// Vitrin karesinin çizim dizisi: ekran ve ekran görüntüsü aynı kodu paylaşır.
+fn draw_gallery_frame(mut rend render.Renderer, mut ur render.UiRenderer, scene ui.Rect, list &ui.DrawList, fw int, fh int, scale f32, n u32) {
+	render.viewport(0, 0, fw, fh)
+	c := u32(ui.surface_0)
+	render.clear_color(f32((c >> 24) & 0xFF) / 255, f32((c >> 16) & 0xFF) / 255, f32((c >> 8) & 0xFF) / 255, 1.0)
+	render.clear(render.gl_color_buffer_bit)
+	if scene.w > 0 && scene.h > 0 {
+		x, y, w, h := to_physical(scene, scale)
+		rend.draw_viewport(render.Camera{ view_h: gallery_view_h }, x, y, w, h, fh, n)
+	}
+	ur.draw(list, fw, fh)
+}
+
 fn run_gallery(args []string) {
+	platform.begin_timer_period()
+	defer {
+		platform.end_timer_period()
+	}
 	o := parse_gallery_opts(args)
 	// --scale verilirse pencere W*S x H*S fiziksel, DPI'dan bağımsız: her makinede aynı ekran görüntüsü.
 	phys_w := if o.scale > 0 { int(math.round(f64(o.width) * f64(o.scale))) } else { o.width }
@@ -191,6 +208,10 @@ fn run_gallery(args []string) {
 	frames := if scripted && o.frames < gallery_script_frames { gallery_script_frames } else { o.frames }
 	n := if o.page == .editor { gallery_quads } else { u32(0) }
 
+	mut fbo := render.Fbo{}
+	defer {
+		fbo.close()
+	}
 	mut frame := 0
 	mut tip_ms := f64(0)
 	for {
@@ -218,30 +239,30 @@ fn run_gallery(args []string) {
 		scene := ui.showcase(mut ctx, mut st, o.page)
 		list := ctx.end()
 
-		render.viewport(0, 0, fw, fh)
-		c := u32(ui.surface_0)
-		render.clear_color(f32((c >> 24) & 0xFF) / 255, f32((c >> 16) & 0xFF) / 255, f32((c >> 8) & 0xFF) / 255, 1.0)
-		render.clear(render.gl_color_buffer_bit)
-		if scene.w > 0 && scene.h > 0 {
-			x, y, w, h := to_physical(scene, scale)
-			rend.draw_viewport(render.Camera{ view_h: gallery_view_h }, x, y, w, h, fh, n)
-		}
-		ur.draw(list, fw, fh)
-		win.set_cursor(cursor_for(ctx.cursor_hint()))
-
 		if o.screenshot != '' && frame + 1 >= frames {
+			// Ekran görüntüsü aynı kareyi FBO'ya çizer; arka tampona çizim gerekmez (pencere hemen kapanır).
+			fbo.resize(fw, fh) or {
+				eprintln('vcore: ${err}')
+				exit(1)
+			}
+			fbo.bind()
+			draw_gallery_frame(mut rend, mut ur, scene, list, fw, fh, scale, n)
 			render.finish()
 			mut px := []u8{len: fw * fh * 4}
 			defer {
 				unsafe { px.free() }
 			}
 			render.read_pixels(0, 0, fw, fh, render.gl_rgba, render.gl_unsigned_byte, px.data)
+			render.unbind_fbo()
+			render.make_opaque(mut px)
 			image.write_png(o.screenshot, fw, fh, px, true) or {
 				eprintln('vcore: ${err}')
 				exit(1)
 			}
 			return
 		}
+		draw_gallery_frame(mut rend, mut ur, scene, list, fw, fh, scale, n)
+		win.set_cursor(cursor_for(ctx.cursor_hint()))
 		win.swap()
 		frame++
 		time.sleep(time.millisecond)

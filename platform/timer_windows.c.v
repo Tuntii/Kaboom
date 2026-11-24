@@ -11,3 +11,18 @@ pub fn now_ns() u64 {
 	C.QueryPerformanceCounter(&c)
 	return qpc_to_ns(c, C.vcore_qpc_freq())
 }
+
+#flag -lwinmm
+#include <mmsystem.h>
+
+fn C.timeBeginPeriod(period u32) u32
+fn C.timeEndPeriod(period u32) u32
+
+// Sistem zamanlayıcısını 1 ms'e çeker; yoksa time.sleep(1ms) ~15 ms'e yuvarlanır. Çağıran eşleşen end'i çağırmalı.
+pub fn begin_timer_period() {
+	C.timeBeginPeriod(1)
+}
+
+pub fn end_timer_period() {
+	C.timeEndPeriod(1)
+}

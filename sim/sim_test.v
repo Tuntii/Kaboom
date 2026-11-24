@@ -15,6 +15,23 @@ fn open_sim(cfg Config) (Sim, &u8) {
 	return s, region
 }
 
+// Sim.flush dış komutları geçmişe yazar: spawn'ın ters işlemi tek bir undo grubudur.
+fn test_sim_flush_records_history() {
+	cfg := Config{
+		capacity:        16
+		queue_capacity:  64
+		record_capacity: 64
+	}
+	mut s, region := open_sim(cfg)
+	defer { memory.release(region) }
+	s.push(cmd.Command{
+		kind:   .spawn
+		source: .agent
+	})
+	assert s.flush() == 1
+	assert s.history.undo_len() == 1
+}
+
 fn read_f32(s &Sim, e ecs.EntityID, comp u16, field u16) f32 {
 	bits := s.world.get_field(e, comp, field) or { panic('get_field none') }
 	return math.f32_from_bits(u32(bits))

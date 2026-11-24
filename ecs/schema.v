@@ -43,6 +43,8 @@ pub mut:
 	max      f64
 	desc     string
 	readonly bool
+	// min ya da max öznitelikle açıkça verildiyse true: varsayılan ±f32 aralığı değildir.
+	ranged bool
 }
 
 pub struct ComponentSchema {
@@ -115,11 +117,13 @@ pub fn (mut r Registry) register[T]() !u16 {
 					fs.desc = value
 				}
 				'min' {
+					fs.ranged = true
 					fs.min = strconv.atof64(value) or {
 						return error('min sayıya çevrilemedi: ${name}.${f.name}')
 					}
 				}
 				'max' {
+					fs.ranged = true
 					fs.max = strconv.atof64(value) or {
 						return error('max sayıya çevrilemedi: ${name}.${f.name}')
 					}

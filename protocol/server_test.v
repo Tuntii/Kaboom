@@ -258,7 +258,8 @@ fn test_record_roundtrip_and_replay_run() {
 	_ = call(mut s, '{"jsonrpc":"2.0","id":4,"method":"sim.step","params":{"n":100}}')
 	stop := result_of(call(mut s,
 		'{"jsonrpc":"2.0","id":5,"method":"record.stop","params":{"path":"${path}"}}'))
-	assert pick(stop, 'commands').f64() == 6
+	// spawn Transform {x} iki prev_* iç yazımı ekler (spawn, add T, set x, set prev_x, set prev_y, add B, set vx, set vx).
+	assert pick(stop, 'commands').f64() == 8
 	assert pick(stop, 'end_tick').f64() == 100
 	stop_hash := str_of(pick(stop, 'hash'))
 	live := result_of(call(mut s, '{"jsonrpc":"2.0","id":6,"method":"sim.state_hash"}'))
@@ -547,7 +548,7 @@ fn test_arena_exhaustion_returns_static_error() {
 	}
 	mut small := []u8{len: 64}
 	arena_set(&u8(small.data), 64)
-	out := s.handle('{"jsonrpc":"2.0","id":1,"method":"sim.state_hash"}') or { panic('yanıt yok') }
+	out := s.handle('{"jsonrpc":"2.0","id":1,"method":"sim.state_hash"}') or { panic('no response') }
 	assert out.contains('request or response too large'), out
 	assert out.contains('"code":-32600'), out
 	arena_set(s.req_region, request_arena_bytes(s.cfg))
@@ -589,7 +590,7 @@ fn test_escaped_backslash_u0000_is_not_nul() {
 fn test_request_after_close_reports_closed() {
 	mut s := new_server()
 	s.close()
-	out := s.handle('{"jsonrpc":"2.0","id":1,"method":"sim.state_hash"}') or { panic('yanıt yok') }
+	out := s.handle('{"jsonrpc":"2.0","id":1,"method":"sim.state_hash"}') or { panic('no response') }
 	assert out.contains('server is closed; create a new server'), out
 	assert out.contains('"code":-32603'), out
 	assert !out.contains('too large'), out
@@ -677,7 +678,7 @@ fn test_query_entities_at_100k_scale() {
 		r := call(mut s, '{"jsonrpc":"2.0","id":${i + 1},"method":"entity.spawn","params":{"components":{"Transform":{"x":1}}}}')
 		assert has(r, 'result'), 'spawn ${i} basarisiz'
 	}
-	out := s.handle('{"jsonrpc":"2.0","id":7,"method":"query.entities","params":{"with":["Transform"]}}') or { panic('yanıt yok') }
+	out := s.handle('{"jsonrpc":"2.0","id":7,"method":"query.entities","params":{"with":["Transform"]}}') or { panic('no response') }
 	// Ölçüm ayrıştırmadan önce: yalnız yanıt ağacının kullandığı bayt sayılır.
 	used := arena_used()
 	assert used <= u64(100_000) * 256, 'sorgu yanıtı ${used} bayt kullandı; bütçe 256 B/varlık'
@@ -735,11 +736,76 @@ fn test_response_does_not_reference_request_line() {
 		s.close()
 	}
 	line := '{"jsonrpc":"2.0","id":"req-1","method":"sim.state_hash"}'.clone()
-	out := s.handle(line) or { panic('yanıt yok') }
+	out := s.handle(line) or { panic('no response') }
 	unsafe { line.free() }
 	mut junk := []u8{len: 64, init: u8(0x41)}
 	assert junk.len == 64
 	r := parse(out) or { panic('yanıt JSON degil: ${out}') }
 	assert str_of(pick(r, 'id')) == 'req-1', out
 	assert has(r, 'result')
+}
+
+// Kaynak parametresi kayda yazılır: handle_from(.editor) girdileri editor olarak kaydeder.
+fn test_handle_from_editor_source_recorded() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_src_editor_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	_ = call(mut s, '{"jsonrpc":"2.0","id":1,"method":"record.start"}')
+	_ = s.handle_from('{"jsonrpc":"2.0","id":2,"method":"entity.spawn"}', .editor) or { panic('no response') }
+	_ = call(mut s, '{"jsonrpc":"2.0","id":3,"method":"record.stop","params":{"path":"${path}"}}')
+	rec := cmd.load_recording(path) or { panic('recording unreadable') }
+	assert rec.entries.len > 0
+	for e in rec.entries {
+		assert e.cmd.source == .editor
+	}
+}
+
+fn test_handle_defaults_to_agent() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_src_agent_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	_ = call(mut s, '{"jsonrpc":"2.0","id":1,"method":"record.start"}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":2,"method":"entity.spawn"}')
+	_ = call(mut s, '{"jsonrpc":"2.0","id":3,"method":"record.stop","params":{"path":"${path}"}}')
+	rec := cmd.load_recording(path) or { panic('recording unreadable') }
+	assert rec.entries.len > 0
+	for e in rec.entries {
+		assert e.cmd.source == .agent
+	}
+}
+
+// entity.spawn Transform {x, y} verince prev_x/prev_y aynı değerlerle tohumlanır.
+fn test_spawn_seeds_prev() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	sp := result_of(call(mut s,
+		'{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":3,"y":4}}}}'))
+	id := u64(pick(sp, 'entity').f64())
+	got := result_of(call(mut s, '{"jsonrpc":"2.0","id":2,"method":"entity.get","params":{"entity":${id}}}'))
+	tr := pick(pick(got, 'components'), 'Transform')
+	assert pick(tr, 'prev_x').f64() == 3
+	assert pick(tr, 'prev_y').f64() == 4
+}
+
+fn test_record_start_hint_mentions_pause_reset() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	_ = call(mut s, '{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}')
+	e := call(mut s, '{"jsonrpc":"2.0","id":2,"method":"record.start"}')
+	hint := str_of(pick(pick(pick(e, 'error'), 'data'), 'hint'))
+	assert hint.contains('call sim.pause, then sim.reset, then record.start'), hint
 }
