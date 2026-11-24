@@ -37,6 +37,8 @@ mut:
 	fps        f32
 	status     [status_cap]u8
 	status_len int
+	err        [status_cap]u8
+	err_len    int
 }
 
 // Yeni editör: panel genişlikleri 240/300, kamera 0,0 görünüm yüksekliği 40, seçim yok.
@@ -51,6 +53,38 @@ pub fn Editor.new(scene_path string) Editor {
 	return e
 }
 
+// Sahne yükleme hatası metni; hata yoksa boş. Tahsissiz görünüm.
+pub fn (e &Editor) load_error() string {
+	return unsafe { tos(&e.err[0], e.err_len) }
+}
+
+// scene.load isteği. Başarısızlık (boş istek, yanıt yok, error üyesi) durum çubuğunda gösterilir ve
+// gösterilen dosya adı temizlenir; ilk karede tek sefer çağrılır.
+fn (mut e Editor) load_scene(mut srv protocol.Server) {
+	mut r := ReqBuf{}
+	r.begin('scene.load')
+	r.param_str('path', e.path.str())
+	line := r.end()
+	if line == '' {
+		e.set_load_error('istek kurulamadı: yol çok uzun')
+		return
+	}
+	resp := srv.handle_from(line, .editor) or {
+		e.set_load_error('yanıt yok')
+		return
+	}
+	if !protocol.response_ok(resp) {
+		e.set_load_error(protocol.response_error_message(resp))
+	}
+}
+
+fn (mut e Editor) set_load_error(msg string) {
+	mut n := put_str(mut e.err, 0, 'sahne yüklenemedi: ')
+	n = put_str(mut e.err, n, msg)
+	e.err_len = n
+	e.path.len = 0
+}
+
 // Son karede hazırlanan durum metni (tahsissiz görünüm; bir sonraki kareye kadar geçerli).
 pub fn (e &Editor) status_text() string {
 	return unsafe { tos(&e.status[0], e.status_len) }
@@ -63,10 +97,7 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 		// Açılışta duraklatılır: oynat/adım düğmeleri ilerlemeyi açıkça yönetir.
 		send_plain(mut srv, 'sim.pause')
 		if e.path.len > 0 {
-			mut r := ReqBuf{}
-			r.begin('scene.load')
-			r.param_str('path', e.path.str())
-			_ = srv.handle_from(r.end(), .editor)
+			e.load_scene(mut srv)
 		}
 	}
 	e.measure(c.input().time_ms)
@@ -88,7 +119,11 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 	}
 	e.format_status(srv)
 	c.statusbar_begin()
-	c.statusbar_text(e.status_text())
+	if e.err_len > 0 {
+		c.text(e.load_error(), .caption, ui.danger)
+	} else {
+		c.statusbar_text(e.status_text())
+	}
 	c.statusbar_end()
 	scene := c.prev_rect(c.id('scene')) or { ui.Rect{} }
 	return EditorFrame{

@@ -1,5 +1,6 @@
 module editor
 
+import os
 import ui
 import protocol
 import sim
@@ -161,4 +162,52 @@ fn test_req_buf_escapes_and_bounds() {
 	long.begin('scene.load')
 	long.param_str('path', 'a'.repeat(1100))
 	assert long.end() == ''
+}
+
+// INT_MIN: negatif işaret taşmadan yazilir.
+fn test_req_buf_int_min() {
+	mut r := ReqBuf{}
+	r.begin('sim.step')
+	r.param_int('n', -2147483648)
+	assert r.end() == '{"jsonrpc":"2.0","id":1,"method":"sim.step","params":{"n":-2147483648}}'
+}
+
+// Eksik sahne dosyasi: ilk karede yükleme hatasi görünür, dosya adi temizlenir.
+fn test_missing_scene_shows_load_error() {
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('yok_dosya_m4c5.vscene')
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.load_error().contains('sahne yüklenemedi'), 'hata: ${e.load_error()}'
+	assert e.load_error().contains('could not read file'), 'hata: ${e.load_error()}'
+	assert e.file_label() == 'Yeni sahne', 'dosya adi temizlenmeli: ${e.file_label()}'
+}
+
+// Geçerli sahne: yükleme hatasi yok ve dünya sahnedeki varlikla kurulur.
+fn test_valid_scene_loads_without_error() {
+	dir := os.temp_dir().replace('\\', '/')
+	path := '${dir}/vcore_m4c5_ok_${os.getpid()}.vscene'
+	defer {
+		os.rm(path) or {}
+	}
+	mut writer := edt_server()
+	call_spawn := writer.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}') or { panic('yanit yok') }
+	assert call_spawn.contains('"entity"')
+	writer.handle('{"jsonrpc":"2.0","id":2,"method":"scene.save","params":{"path":"${path}"}}') or { panic('yanit yok') }
+	writer.close()
+
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new(path)
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.load_error() == '', 'hata olmamali: ${e.load_error()}'
+	assert srv.world().alive_count() == 1
 }

@@ -29,7 +29,7 @@ pub fn (mut r ReqBuf) param_int(key string, v int) {
 	if v < 0 {
 		r.put_byte(`-`)
 	}
-	mut mag := if v < 0 { u64(-v) } else { u64(v) }
+	mut mag := if v < 0 { u64(-i64(v)) } else { u64(v) }
 	mut digits := [20]u8{}
 	mut k := 0
 	for {

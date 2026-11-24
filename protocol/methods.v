@@ -465,6 +465,8 @@ fn (mut s Server) sim_step(p Val) !Val {
 	for _ in 0 .. n {
 		s.engine.step()
 	}
+	// R6: simülasyon adımı dünyayı değiştirir (kaydedilmiş dosyadan ayrılır).
+	s.changes += u64(n)
 	return kv('tick', num(f64(u64(s.engine.tick()))))
 }
 
@@ -883,12 +885,17 @@ fn (mut s Server) commit(cmds []cmd.Command) ! {
 		}
 	}
 	_ = s.engine.flush()
-	for i, c in cmds {
-		r := s.engine.queue.result(u32(i))
-		if r.status != .ok {
-			return s.cmd_error(r.status, c)
+	// Kuyruk her komutu uygular: her başarılı sonuç sayılır, hata ilk hatalı komuttan döner.
+	mut first := -1
+	for i in 0 .. cmds.len {
+		if s.engine.queue.result(u32(i)).status == .ok {
+			s.changes++
+		} else if first < 0 {
+			first = i
 		}
-		s.changes++
+	}
+	if first >= 0 {
+		return s.cmd_error(s.engine.queue.result(u32(first)).status, cmds[first])
 	}
 }
 

@@ -929,7 +929,7 @@ fn test_replay_rejects_snapshot_with_different_schema_as_1010() {
 	assert error_code(call(mut s, '{"jsonrpc":"2.0","id":3,"method":"replay.run","params":{"path":"${path}"}}')) == 1010
 }
 
-// Editör ve düzen için sunucu sayaçları: change_count yalnız dünya değişince artar (sim.step artırmaz).
+// Editör ve düzen için sunucu sayaçları: change_count dünya değişince ve simülasyon adımında artar.
 fn test_change_count_tick_and_history_lens() {
 	mut s := new_server()
 	defer {
@@ -941,11 +941,103 @@ fn test_change_count_tick_and_history_lens() {
 	assert spawned > 0
 	call(mut s, '{"jsonrpc":"2.0","id":2,"method":"sim.step","params":{"n":3}}')
 	assert s.tick() == 3
-	assert s.change_count() == spawned, 'sim.step dünya değişikliği sayılmaz'
+	assert s.change_count() == spawned + 3, 'sim.step her adımda sayılır (R6)'
 	undo, redo := s.history_lens()
 	assert undo == 1 && redo == 0
 	call(mut s, '{"jsonrpc":"2.0","id":3,"method":"history.undo"}')
 	assert s.change_count() > spawned
 	undo2, redo2 := s.history_lens()
 	assert undo2 == 0 && redo2 == 1
+}
+
+// Başarisiz istek sayaci değiştirmez.
+fn test_failed_request_leaves_change_count() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	before := s.change_count()
+	call(mut s, '{"jsonrpc":"2.0","id":1,"method":"entity.despawn","params":{"entity":999}}')
+	assert s.change_count() == before
+}
+
+// Kismi toplu iş: kuyruk her komutu uygular; sayaç yalniz başarili komutlari sayar, hata ilk hatali komuttur.
+fn test_partial_batch_counts_ok_commands() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	before := s.change_count()
+	cmds := [
+		cmd.Command{
+			kind:   .despawn
+			source: .agent
+			entity: ecs.EntityID(u64(999))
+		},
+		cmd.Command{
+			kind:   .spawn
+			source: .agent
+		},
+	]
+	s.commit(cmds) or {
+		assert s.change_count() == before + 1, 'kismi toplu iş: ${s.change_count()} - ${before}'
+		return
+	}
+	assert false, 'hatali komut hata döndürmeli'
+}
+
+// scene.load ve sim.reset dünyayi değiştirir: sayaç artar.
+fn test_scene_load_and_reset_change_count() {
+	dir := os.temp_dir().replace('\\', '/')
+	path := '${dir}/vcore_m4c5_cc_${os.getpid()}.vscene'
+	defer {
+		os.rm(path) or {}
+	}
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	call(mut s, '{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}')
+	call(mut s, '{"jsonrpc":"2.0","id":2,"method":"scene.save","params":{"path":"${path}"}}')
+	before_reset := s.change_count()
+	call(mut s, '{"jsonrpc":"2.0","id":3,"method":"sim.reset"}')
+	assert s.change_count() > before_reset, 'sim.reset counted'
+	before_load := s.change_count()
+	call(mut s, '{"jsonrpc":"2.0","id":4,"method":"scene.load","params":{"path":"${path}"}}')
+	assert s.change_count() > before_load, 'scene.load sayilir'
+}
+
+// sim.step ve advance(1) (duraklatilmamiş) sayaci artirir; advance(0) ve duraklatma artirmaz.
+fn test_sim_step_and_advance_change_count() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	before := s.change_count()
+	call(mut s, '{"jsonrpc":"2.0","id":1,"method":"sim.step","params":{"n":1}}')
+	assert s.change_count() == before + 1
+	s.advance(1)
+	assert s.change_count() == before + 2
+	s.advance(0)
+	assert s.change_count() == before + 2
+	call(mut s, '{"jsonrpc":"2.0","id":2,"method":"sim.pause"}')
+	s.advance(5)
+	assert s.change_count() == before + 2, 'duraklatilmiş ilerleme sayilmaz'
+}
+
+// Yanit yardimcilari: başari, hata ve hata iletisi (ipucu öncelikli).
+fn test_response_helpers() {
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	ok_line := s.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}') or { panic('yanit yok') }
+	assert response_ok(ok_line)
+	assert (response_entity(ok_line) or { ecs.EntityID(u64(999)) }) == ecs.EntityID(u64(0))
+	err_line := s.handle('{"jsonrpc":"2.0","id":2,"method":"scene.load","params":{"path":"yok_dosya.vscene"}}') or {
+		panic('yanit yok')
+	}
+	assert !response_ok(err_line)
+	assert response_error_message(err_line).contains('could not read file')
+	assert response_entity(err_line) == none
 }

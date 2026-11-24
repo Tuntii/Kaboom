@@ -119,6 +119,8 @@ pub fn (mut s Server) advance(steps u32) {
 	for _ in 0 .. steps {
 		s.engine.step()
 	}
+	// R6: her ilerleyen adım dünya değişikliğidir (duraklatılmışken artmaz).
+	s.changes += u64(steps)
 }
 
 pub fn (s &Server) world() &ecs.World {
