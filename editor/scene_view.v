@@ -372,7 +372,7 @@ fn (mut e Editor) set_transform(mut srv protocol.Server, field string, v f32) {
 	r.param_str('component', 'Transform')
 	r.param_str('field', field)
 	r.param_f32('value', v)
-	_ = srv.handle_from(r.end(), .editor)
+	_ = editor_request(mut e, mut srv, r.end(), 'istek')
 }
 
 // Pan: basış anındaki kamera + fare farkı (birikmeden; sürüklemenin sonu tam konumu verir).

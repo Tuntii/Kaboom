@@ -49,11 +49,7 @@ fn (mut e Editor) history_step(mut srv protocol.Server, undo bool) {
 	}
 	mut r := ReqBuf{}
 	r.begin(if undo { 'history.undo' } else { 'history.redo' })
-	resp := srv.handle_from(r.end(), .editor) or { return }
-	if !protocol.response_ok(resp) {
-		e.flash_error('geri alma başarısız: ', protocol.response_error_message(resp))
-		return
-	}
+	resp := editor_request(mut e, mut srv, r.end(), if undo { 'geri alma' } else { 'yineleme' }) or { return }
 	has, sel := e.sv.selected()
 	if has {
 		if n := protocol.response_remap(resp, sel) {
@@ -83,19 +79,7 @@ fn (mut e Editor) save_to(mut srv protocol.Server, path string) bool {
 	mut r := ReqBuf{}
 	r.begin('scene.save')
 	r.param_str('path', path)
-	line := r.end()
-	if line == '' {
-		e.flash_error('kayıt kurulamadı: ', 'yol çok uzun')
-		return false
-	}
-	resp := srv.handle_from(line, .editor) or {
-		e.flash_error('kayıt: ', 'yanıt yok')
-		return false
-	}
-	if !protocol.response_ok(resp) {
-		e.flash_error('kayıt başarısız: ', protocol.response_error_message(resp))
-		return false
-	}
+	_ = editor_request(mut e, mut srv, r.end(), 'kayıt') or { return false }
 	e.path.set(path)
 	e.saved_count = srv.change_count()
 	e.file_field = .idle
@@ -108,21 +92,10 @@ fn (mut e Editor) open_path(mut srv protocol.Server, path string) bool {
 	mut r := ReqBuf{}
 	r.begin('scene.load')
 	r.param_str('path', path)
-	line := r.end()
-	if line == '' {
-		e.flash_error('yükleme kurulamadı: ', 'yol çok uzun')
-		return false
-	}
-	resp := srv.handle_from(line, .editor) or {
-		e.flash_error('yükleme: ', 'yanıt yok')
-		return false
-	}
-	if !protocol.response_ok(resp) {
-		e.flash_error('yükleme başarısız: ', protocol.response_error_message(resp))
-		return false
-	}
+	_ = editor_request(mut e, mut srv, r.end(), 'yükleme') or { return false }
 	e.path.set(path)
 	e.saved_count = srv.change_count()
+	e.loads_seen = srv.load_count()
 	e.sv.sel = none
 	e.cam.cx = 0
 	e.cam.cy = 0
@@ -324,7 +297,7 @@ fn (mut e Editor) file_bar(mut c ui.Context, mut srv protocol.Server) {
 // Ctrl+Z geri al; Ctrl+Y ve Ctrl+Shift+Z yineler; Ctrl+S kaydeder. c.shortcut klavye bir alandayken atlar.
 fn (mut e Editor) file_shortcuts(mut c ui.Context, mut srv protocol.Server) {
 	// Esc: açık yol alanını ya da bekleyen şeridi kapatır; alan Esc'i yutsa da burada görülür.
-	if key_hit(c.input(), .escape) && (e.file_field != .idle || e.confirm != .idle) {
+	if !c.menu_open() && key_hit(c.input(), .escape) && (e.file_field != .idle || e.confirm != .idle) {
 		e.cancel_confirm()
 	}
 	if !c.input().ctrl {

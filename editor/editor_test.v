@@ -173,18 +173,24 @@ fn test_req_buf_int_min() {
 	assert r.end() == '{"jsonrpc":"2.0","id":1,"method":"sim.step","params":{"n":-2147483648}}'
 }
 
-// Eksik sahne dosyasi: ilk karede yükleme hatasi görünür, dosya adi temizlenir.
-fn test_missing_scene_shows_load_error() {
+// Var olup yüklenemeyen sahne dosyasi: ilk karede yükleme hatasi görünür, yol temizlenir (üzerine yazılmaz).
+// Olmayan dosya için bkz. test_missing_scene_starts_empty_with_path (final_fix_test.v).
+fn test_invalid_scene_file_shows_load_error() {
 	mut srv := edt_server()
 	defer {
 		srv.close()
 	}
 	mut atl := ui.Atlas.build(1.0) or { panic(err) }
 	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
-	mut e := Editor.new('yok_dosya_m4c5.vscene')
+	dir := os.temp_dir().replace('\\', '/')
+	path := '${dir}/vcore_m4c_fix_bad_${os.getpid()}.vscene'
+	os.write_file(path, 'bu bir sahne degil') or { panic(err) }
+	defer {
+		os.rm(path) or {}
+	}
+	mut e := Editor.new(path)
 	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
 	assert e.load_error().contains('sahne yüklenemedi'), 'hata: ${e.load_error()}'
-	assert e.load_error().contains('could not read file'), 'hata: ${e.load_error()}'
 	assert e.file_label() == 'Yeni sahne', 'dosya adi temizlenmeli: ${e.file_label()}'
 }
 

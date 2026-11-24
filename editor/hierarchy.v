@@ -186,7 +186,7 @@ fn (mut e Editor) spawn_at_camera(mut srv protocol.Server) {
 	r.param_f32('b', spawn_b)
 	r.obj_end()
 	r.obj_end()
-	resp := editor_request(mut e, mut srv, r.end()) or { return }
+	resp := editor_request(mut e, mut srv, r.end(), 'istek') or { return }
 	id := protocol.response_entity(resp) or { return }
 	e.sv.sel = id
 }
@@ -202,24 +202,7 @@ fn (mut e Editor) delete_selected(mut srv protocol.Server) {
 	mut r := ReqBuf{}
 	r.begin('entity.despawn')
 	r.param_entity('entity', id)
-	_ = editor_request(mut e, mut srv, r.end()) or { return }
+	_ = editor_request(mut e, mut srv, r.end(), 'istek') or { return }
 	e.sv.sel = none
 }
 
-// Editör isteği: kurulamayan, yanıtsız ya da hatalı istek durum çubuğuna bildirilir; başarıda yanıt ve bildirim temizliği.
-fn editor_request(mut e Editor, mut srv protocol.Server, line string) ?string {
-	if line == '' {
-		e.set_note('istek kurulamadı: değer sınır dışı')
-		return none
-	}
-	resp := srv.handle_from(line, .editor) or {
-		e.set_note('yanıt yok')
-		return none
-	}
-	if !protocol.response_ok(resp) {
-		e.set_note(protocol.response_error_message(resp))
-		return none
-	}
-	e.note_len = 0
-	return resp
-}

@@ -179,3 +179,47 @@ fn test_idle_frames_zero_alloc_with_path() {
 	}
 	assert memory.heap_alloc_count() - before == 0
 }
+
+// Açık "Bileşen ekle" menüsü ve görünür durum çubuğu hatası varken boşta kareler de heap tahsisi yapmaz.
+fn test_idle_frames_zero_alloc_with_open_menu_and_error() {
+	if !memory.heap_tracking_enabled() {
+		eprintln('atlandi: -d track_heap ile calistir')
+		return
+	}
+	mut srv := protocol.Server.new(sim.Config{ capacity: 64, queue_capacity: 64, record_capacity: 1024 }) or {
+		panic(err)
+	}
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	resp := srv.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":1,"y":2},"Sprite":{"size":4}}}}') or {
+		panic('yanit yok')
+	}
+	e.sv.sel = protocol.response_entity(resp) or { panic('kimlik yok') }
+	for k in 0 .. 3 {
+		c.begin(ui.Input{ mouse_x: -1, mouse_y: -1, time_ms: f64(k) * 16 }, 1440, 900, 1.0)
+		e.frame(mut c, mut srv)
+		c.end()
+	}
+	btn := e.add_component_rect(&c) or { panic('ekle dugmesi yok') }
+	x := btn.x + btn.w / 2
+	y := btn.y + btn.h / 2
+	for inp in [ui.Input{ mouse_x: x, mouse_y: y }, press_input(x, y), release_input(x, y), ui.Input{ mouse_x: -1, mouse_y: -1 }, ui.Input{ mouse_x: -1, mouse_y: -1 }] {
+		c.begin(inp, 1440, 900, 1.0)
+		e.frame(mut c, mut srv)
+		c.end()
+	}
+	assert c.menu_open(), 'menü açık olmalı'
+	e.flash_error('istek başarısız: ', 'örnek hata')
+	assert e.flash_text() != '', 'durum çubuğunda hata görünmeli'
+	before := memory.heap_alloc_count()
+	for k in 10 .. 110 {
+		c.begin(ui.Input{ mouse_x: -1, mouse_y: -1, time_ms: f64(k) * 16 }, 1440, 900, 1.0)
+		e.frame(mut c, mut srv)
+		c.end()
+	}
+	assert memory.heap_alloc_count() - before == 0
+}

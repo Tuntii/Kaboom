@@ -2,12 +2,39 @@ module editor
 
 import ecs
 import math
+import protocol
 
 // strtof: protocol/scene.v ile aynı C bağlaması (yuvarlama IEEE ile; metin → f32 bit-eşit kontrolü).
 fn C.strtof(s &char, endp voidptr) f32
 
 // İstek satırı kurucusu: sabit tampon, tahsis yok. Yanıt handle_from'un istek arenasında yaşar.
 const req_cap = 1024
+
+// Editör isteğinin tek gönderim noktası (dünya yazımı buradan geçer): yanıt satırı ya da yanıtsızlık döner.
+fn editor_reply(mut srv protocol.Server, line string) ?string {
+	if line == '' {
+		return none
+	}
+	return srv.handle_from(line, .editor)
+}
+
+// Editör isteği; hata (kurulamadı, yanıt yok, hatalı yanıt) durum çubuğunda 4 sn flash olarak what etiketiyle görünür.
+// Başarıda yanıt döner; bildirimlere (note) dokunmaz.
+fn editor_request(mut e Editor, mut srv protocol.Server, line string, what string) ?string {
+	if line == '' {
+		e.flash_error('${what} kurulamadı: ', 'değer ya da yol sınır dışı')
+		return none
+	}
+	resp := editor_reply(mut srv, line) or {
+		e.flash_error('${what}: ', 'yanıt yok')
+		return none
+	}
+	if !protocol.response_ok(resp) {
+		e.flash_error('${what} başarısız: ', protocol.response_error_message(resp))
+		return none
+	}
+	return resp
+}
 
 // f32 en büyük sonlu değeri: bunun ötesi (ve NaN, inf) JSON sayısı değildir, istek kurulmaz.
 const editor_f32_max = f64(3.4028234663852886e+38)

@@ -281,3 +281,106 @@ fn test_recording_tags_sources_and_replays_to_live_hash() {
 	res := sim.replay(rec, srv.registry()) or { panic('replay: ${err}') }
 	assert res.hash == sim.state_hash(srv.world(), srv.tick()), 'replay hash canlıya eşit olmalı'
 }
+
+// Tek varlıklı sahne dosyası (x=5, y=5): ajan yüklemesi testleri için. Yazıcı süreci ayrı bir Server'dır.
+fn cc_scene_file(tag string) string {
+	dir := os.temp_dir().replace('\\', '/')
+	path := '${dir}/vcore_m4c_fix_${tag}_${os.getpid()}.vscene'
+	mut writer := cc_server()
+	writer.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":5,"y":5},"Sprite":{"size":4}}}}') or {
+		panic('yanit yok')
+	}
+	writer.handle('{"jsonrpc":"2.0","id":2,"method":"scene.save","params":{"path":"${path}"}}') or { panic('yanit yok') }
+	writer.close()
+	return path
+}
+
+fn cc_agent_load(mut srv protocol.Server, path string) {
+	resp := srv.handle('{"jsonrpc":"2.0","id":3,"method":"scene.load","params":{"path":"${path}"}}') or {
+		panic('yanit yok')
+	}
+	assert protocol.response_ok(resp), resp
+}
+
+fn cc_agent_reset(mut srv protocol.Server) {
+	resp := srv.handle('{"jsonrpc":"2.0","id":4,"method":"sim.reset"}') or { panic('yanit yok') }
+	assert protocol.response_ok(resp), resp
+}
+
+// Yeni dunyanin ilk varligi (sprite sirasinda ilk satir).
+fn cc_first_entity(srv &protocol.Server) ecs.EntityID {
+	sp := srv.world().store(ecs.sprite_id)
+	assert sp.len() > 0, 'yeni dunyada sprite olmali'
+	id := srv.world().entities().handle_at(sp.index_at(0)) or { panic('kimlik yok') }
+	return id
+}
+
+// Surukleme ortasinda ajan yuklemesi/sifirlamasi: editor secimi ve grubu birakir; kalan hareket ve Esc yeni dunyaya yazmaz.
+fn test_agent_load_during_gizmo_drag_drops_drag() {
+	path := cc_scene_file('gizmo')
+	defer {
+		os.rm(path) or {}
+	}
+	mut srv := cc_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	_ = cc_spawn(mut srv, 0, 0, 4)
+	r := cc_warm(mut c, mut e, mut srv)
+	cc_select_at_origin(mut c, mut e, mut srv, r)
+	ox, oy := e.cam.world_to_screen(r, 0, 0)
+	cc_gizmo_drag_start(mut c, mut e, mut srv, ox + 40, oy)
+	assert e.sv.mode == .move, 'surukleme grubu acik olmali'
+	cc_agent_load(mut srv, path)
+	// Yukleme karesi: secim ve grup duser; geri alma gecmisi yeni dunyaninkidir (bos).
+	cc_frame(mut c, mut e, mut srv, cc_held(ox + 60, oy))
+	has, _ := e.sv.selected()
+	assert !has, 'yukleme sonrasi secim dusmeli'
+	assert e.sv.mode == .idle && !e.ins.grouping, 'surukleme durmali'
+	id := cc_first_entity(&srv)
+	x0 := cc_field(&srv, id, ecs.transform_id, 'x')
+	undo0 := cc_undo_count(&srv)
+	// Basili fare yeni konumlara gider, sonra Esc ve birakma: yeni dunyaya hicbir yazim gitmez.
+	cc_frame(mut c, mut e, mut srv, cc_held(ox + 90, oy))
+	cc_gizmo_cancel(mut c, mut e, mut srv, ox + 90, oy)
+	assert cc_field(&srv, id, ecs.transform_id, 'x') == x0, 'yeni dunya degismemeli'
+	assert cc_undo_count(&srv) == undo0, 'ek geri alma adimi olusmamali: ${cc_undo_count(&srv)} ${undo0}'
+	assert !e.note_text().contains('geri alma'), 'sahte geri alma bildirimi: ${e.note_text()}'
+}
+
+// sim.reset secili varlikta: secim duser, geri alma adimi eklenmez, yeni dunyaya yazilmaz.
+fn test_agent_reset_with_selection_clears_selection() {
+	mut srv := cc_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	_ = cc_spawn(mut srv, 0, 0, 4)
+	r := cc_warm(mut c, mut e, mut srv)
+	cc_select_at_origin(mut c, mut e, mut srv, r)
+	has0, _ := e.sv.selected()
+	assert has0, 'secim yapilmali'
+	ox, oy := e.cam.world_to_screen(r, 0, 0)
+	cc_gizmo_drag_start(mut c, mut e, mut srv, ox + 40, oy)
+	cc_agent_reset(mut srv)
+	// Ajan sıfırlamadan sonra yeni varlık kurar: kimlik eskisiyle aynı olabilir (seçim yanlışlıkla canlı görünür).
+	_ = cc_spawn(mut srv, 7, 7, 4)
+	cc_frame(mut c, mut e, mut srv, cc_held(ox + 90, oy))
+	has, _ := e.sv.selected()
+	assert !has, 'sifirlama sonrasi secim dusmeli'
+	assert e.sv.mode == .idle && !e.ins.grouping
+	assert cc_undo_count(&srv) == 1, 'sifirlamada yalniz ajanin spawn adimi olmali: ${cc_undo_count(&srv)}'
+	assert srv.world().alive_count() == 1, 'yeni dunya yalniz ajanin varligini icermeli'
+}
+
+// Basili fare (sol tus) konumu; basis ani degil, suruklemenin ara karesi.
+fn cc_held(x f32, y f32) ui.Input {
+	mut inp := ui.Input{ mouse_x: x, mouse_y: y }
+	inp.down[0] = true
+	return inp
+}

@@ -1,6 +1,7 @@
 module editor
 
 import ecs
+import os
 import protocol
 import sim
 import ui
@@ -378,4 +379,55 @@ fn test_rejected_value_stays_in_edit() {
 	assert !c.keyboard_captured(), 'Esc duzenlemeyi birakmali'
 	assert e.ins.err_text(ecs.EntityID(id), ecs.sprite_id, ri) == '', 'Esc hatayi temizlemeli'
 	assert ins_field_value(&srv, id, ecs.sprite_id, 'r') == 0
+}
+
+// Inspektör sürüklemesi ortasında ajan yüklemesi: alan grubu düşer, yeni dünyaya yazılmaz (kendi yardımcılarıyla).
+fn ins_scene_file(tag string) string {
+	dir := os.temp_dir().replace('\\', '/')
+	path := '${dir}/vcore_m4c_fix_${tag}_${os.getpid()}.vscene'
+	mut writer := ins_server()
+	writer.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":5,"y":5},"Sprite":{"size":4}}}}') or {
+		panic('yanit yok')
+	}
+	writer.handle('{"jsonrpc":"2.0","id":2,"method":"scene.save","params":{"path":"${path}"}}') or { panic('yanit yok') }
+	writer.close()
+	return path
+}
+
+fn test_agent_load_during_inspector_drag_drops_drag() {
+	path := ins_scene_file('inspector')
+	defer {
+		os.rm(path) or {}
+	}
+	mut srv := ins_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	_ = ins_setup(mut c, mut e, mut srv)
+	r := ins_field_rect(&e, &c, &srv, ecs.transform_id, 'x')
+	px := r.x + r.w / 2
+	py := r.y + r.h / 2
+	ins_frame(mut c, mut e, mut srv, ins_hover(px, py))
+	ins_frame(mut c, mut e, mut srv, ins_down(px, py, true))
+	ins_frame(mut c, mut e, mut srv, ins_down(px + 30, py, false))
+	assert e.ins.grouping, 'alan surukleme grubu acik olmali'
+	resp := srv.handle('{"jsonrpc":"2.0","id":3,"method":"scene.load","params":{"path":"${path}"}}') or {
+		panic('yanit yok')
+	}
+	assert protocol.response_ok(resp), resp
+	ins_frame(mut c, mut e, mut srv, ins_down(px + 50, py, false))
+	assert !e.ins.grouping && e.sv.mode == .idle, 'yukleme sonrasi grup kapanmali'
+	sp := srv.world().store(ecs.sprite_id)
+	assert sp.len() > 0, 'yeni dunyada sprite olmali'
+	id := srv.world().entities().handle_at(sp.index_at(0)) or { panic('kimlik yok') }
+	x0 := ins_field_value(&srv, u64(id), ecs.transform_id, 'x')
+	undo0 := ins_undo_count(&srv)
+	ins_frame(mut c, mut e, mut srv, ins_down(px + 80, py, false))
+	ins_frame(mut c, mut e, mut srv, ins_up(px + 80, py))
+	assert ins_field_value(&srv, u64(id), ecs.transform_id, 'x') == x0, 'yeni dunya alani degismemeli'
+	assert ins_undo_count(&srv) == undo0, 'ek geri alma adimi olusmamali'
+	assert !e.note_text().contains('geri alma'), 'sahte bildirim: ${e.note_text()}'
 }

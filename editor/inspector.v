@@ -287,7 +287,7 @@ fn (mut e Editor) commit_field(mut srv protocol.Server, id ecs.EntityID, comp u1
 		}
 	}
 	if out != cur {
-		field_request(mut srv, id, cname, f.name, out)
+		e.field_request(mut srv, id, cname, f.name, out)
 	}
 	e.ins.clear_err(id, comp, fi)
 }
@@ -300,21 +300,21 @@ fn (mut e Editor) cancel_drag(mut srv protocol.Server, id ecs.EntityID, cname st
 	}
 	e.ins.grouping = false
 	srv.history_cancel_group() or {
-		field_request(mut srv, id, cname, f.name, v)
+		e.field_request(mut srv, id, cname, f.name, v)
 		srv.history_end_group()
 		e.set_note('geri alma geçmişi doldu; değer geri yüklendi')
 	}
 }
 
 // component.set (tek alan) editör kaynağıyla.
-fn field_request(mut srv protocol.Server, id ecs.EntityID, cname string, fname string, v f32) {
+fn (mut e Editor) field_request(mut srv protocol.Server, id ecs.EntityID, cname string, fname string, v f32) {
 	mut r := ReqBuf{}
 	r.begin('component.set')
 	r.param_entity('entity', id)
 	r.param_str('component', cname)
 	r.param_str('field', fname)
 	r.param_f32('value', v)
-	_ = srv.handle_from(r.end(), .editor)
+	_ = editor_request(mut e, mut srv, r.end(), 'istek')
 }
 
 // component.add / component.remove (bileşen adıyla, değersiz).
@@ -323,7 +323,7 @@ fn (mut e Editor) comp_request(mut srv protocol.Server, method string, id ecs.En
 	r.begin(method)
 	r.param_entity('entity', id)
 	r.param_str('component', cname)
-	_ = srv.handle_from(r.end(), .editor)
+	_ = editor_request(mut e, mut srv, r.end(), 'istek')
 }
 
 // Son karede inspektör "Seçim yok" gösterdi mi (okuma; testler için).
