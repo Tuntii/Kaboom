@@ -210,8 +210,9 @@ fn pair_subtables(d []u8, ll int) []PairSub {
 // Charset glif kimlikleri (gids, indeks = charset indeksi; 0 eksik glif) arasında sıfır olmayan tüm sıralı
 // çiftler; sol<<16|sağ anahtarlı. Her alt tablo için kapsama bir kez hesaplanır, çiftler numaralandırılır.
 // Kural: lookup içinde ilk eşleşen alt tablo kazanır; lookup'ların değerleri toplanır.
-// shortcut: PairSet'ler sıralı ve tekil varsayılır (OpenType zorunluluğu); bozuk veride ikili arama yerine
-// doğrusal tarama farklı eşleşme seçebilir, bit-eşitlik yalnızca geçerli fontlar için garanti edilir.
+// shortcut: PairSet'ler sıralı ve tekil varsayılır (OpenType zorunluluğu); bozuk veride doğrusal tarama ikili
+// aramadan farklı kayıt seçebilir. Yükseltme: bozuk font verisi gerçekçi hale gelirse PairSet sıralılığı doğrulanmalı
+// ya da ikili arama yolu geri getirilmeli; bit-eşitlik şimdilik yalnızca geçerli fontlarda garanti.
 fn gpos_kern_table(d []u8, gids []int) []KernPair {
 	mut out := []KernPair{}
 	ll := gpos_lookup_list(d)
@@ -235,7 +236,7 @@ fn gpos_kern_table(d []u8, gids []int) []KernPair {
 			head[g] = i
 		}
 	}
-	mut vals := []int{len: n * n}
+	mut vals := []i32{len: n * n}
 	mut done := []bool{len: n * n}
 	mut cov := []int{len: n}
 	mut cls := []int{len: n}
@@ -287,7 +288,7 @@ fn gpos_kern_table(d []u8, gids []int) []KernPair {
 						if !done[i * n + j] {
 							done[i * n + j] = true
 							if has_xadv {
-								vals[i * n + j] += be_i16(d, r + 2 + xoff)
+								vals[i * n + j] += i32(be_i16(d, r + 2 + xoff))
 							}
 						}
 						j = nxt[j]
@@ -321,14 +322,14 @@ fn gpos_kern_table(d []u8, gids []int) []KernPair {
 				}
 				done[i * n + j] = true
 				if has_xadv {
-					vals[i * n + j] += be_i16(d, st + 16 + (c1 * c2cnt + c2) * rec_vals + xoff)
+					vals[i * n + j] += i32(be_i16(d, st + 16 + (c1 * c2cnt + c2) * rec_vals + xoff))
 				}
 			}
 		}
 	}
 	for i in 0 .. n {
 		for j in 0 .. n {
-			v := vals[i * n + j]
+			v := int(vals[i * n + j])
 			if v != 0 {
 				out << KernPair{
 					key: u32(i) << 16 | u32(j)
@@ -336,6 +337,11 @@ fn gpos_kern_table(d []u8, gids []int) []KernPair {
 				}
 			}
 		}
+	}
+	// Geçici tablolar -gc none altında toplanmaz; bu çağrı bitince elle serbest bırakılır.
+	unsafe {
+		vals.free()
+		done.free()
 	}
 	return out
 }

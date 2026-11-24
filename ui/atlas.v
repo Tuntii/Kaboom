@@ -319,6 +319,10 @@ pub fn (a &Atlas) white_uv() (f32, f32) {
 
 // Mantıksal piksel genişlik; kerning dahil, tahsis yok.
 pub fn (a &Atlas) measure(text string, role TextRole) f32 {
+	// Sıfır Atlas{} glif tutmaz (charset boş); glif indeksi panik olmasın diye genişlik 0.
+	if a.cps.len == 0 {
+		return 0
+	}
 	mut total := f32(0)
 	mut prev := u32(0)
 	mut i := 0
@@ -354,6 +358,10 @@ fn (a &Atlas) face_gids(face FontFace) []int {
 
 // Yüz kerning tablosu; ilk çağrıda kurulur (tek seferlik tahsis), sonra önbellekten döner.
 fn (a &Atlas) kern_table(face FontFace) []KernPair {
+	// Sıfır Atlas{} önbelleksizdir; kerning yok sayılır (tablo boş).
+	if isnil(a.kc) {
+		return []KernPair{}
+	}
 	mut kc := a.kc
 	if !kc.ready[int(face)] {
 		kc.tabs[int(face)] = gpos_kern_table(face_bytes(face), a.face_gids(face))

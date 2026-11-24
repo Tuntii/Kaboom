@@ -117,3 +117,10 @@ fn test_kern_lazy_first_use() {
 	assert a.kc.ready[int(FontFace.sans)]
 	assert !a.kc.ready[int(FontFace.mono)]
 }
+
+// Sıfır Atlas{} (önbelleksiz, charset boş) kern ve measure çağrısında panik etmez; genişlik 0.
+fn test_zero_atlas_no_panic() {
+	z := Atlas{}
+	assert z.kern(.body, u32(0x54), 0x6F) == 0
+	assert z.measure('To', .body) == 0
+}
