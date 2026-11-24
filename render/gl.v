@@ -15,7 +15,6 @@ fn C.glReadPixels(x int, y int, width int, height int, format u32, typ u32, pixe
 fn C.glFinish()
 fn C.glGetString(name u32) &u8
 fn C.glGetError() u32
-fn C.glGetIntegerv(pname u32, data voidptr)
 fn C.glGenTextures(n int, textures voidptr)
 fn C.glDeleteTextures(n int, textures voidptr)
 fn C.glBindTexture(target u32, texture u32)
@@ -47,7 +46,6 @@ pub const gl_color_buffer_bit = u32(0x4000)
 pub const gl_rgba = u32(0x1908)
 pub const gl_version = u32(0x1F02)
 pub const gl_unsigned_int = u32(0x1405)
-pub const gl_viewport = u32(0x0BA2)
 pub const gl_texture_2d = u32(0x0DE1)
 pub const gl_red = u32(0x1903)
 pub const gl_r8 = u32(0x8229)
@@ -370,10 +368,6 @@ pub fn get_string(name u32) &u8 {
 
 pub fn get_error() u32 {
 	return C.glGetError()
-}
-
-pub fn get_integerv(pname u32, data voidptr) {
-	C.glGetIntegerv(pname, data)
 }
 
 // Tek doku kimliği üreten sarmalayıcı: glGenTextures(1, ...).

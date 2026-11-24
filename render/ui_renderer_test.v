@@ -186,11 +186,62 @@ fn test_draw_viewport_only_touches_region() {
 	clear_color(0, 0, 1, 1)
 	clear(gl_color_buffer_bit)
 	viewport(0, 0, cw, ch)
-	r.draw_viewport(Camera{ view_h: 100 }, 0, 0, 32, 64, 0)
+	r.draw_viewport(Camera{ view_h: 100 }, 0, 0, 32, 64, ch, 0)
 	finish()
 	or_, og, ob := gl_px(48, 32)
 	assert or_ <= 1 && og <= 1 && ob >= 254
 	// Sol üst köken (16, 32) → GL (16, ch-33); surface_0 = 0x111214.
 	ir, ig, ib := gl_px(16, ch - 1 - 32)
 	assert near(ir, 0x11) && near(ig, 0x12) && near(ib, 0x14)
+}
+
+// Önceki viewport yarım yükseklikte kalmış olsa da bölge fb_h'ye göre (üst-sol 32x32) temizlenir.
+fn test_draw_viewport_uses_fb_h_not_current_viewport() {
+	mut w := open_gl_window() or { return }
+	defer { w.close() }
+	cw, ch := w.size()
+	mut r := Renderer.new(16) or {
+		assert false, 'Renderer.new: ${err}'
+		return
+	}
+	defer { r.close() }
+	clear_color(0, 0, 1, 1)
+	clear(gl_color_buffer_bit)
+	viewport(0, 0, cw, ch / 2)
+	r.draw_viewport(Camera{ view_h: 100 }, 0, 0, 32, 32, ch, 0)
+	finish()
+	// Üst-sol bölge (16, 16) değişmiş olmalı; alt-sol (16, 16) GL'de mavi kalmalı.
+	tr, tg, tb := gl_px(16, ch - 1 - 16)
+	assert near(tr, 0x11) && near(tg, 0x12) && near(tb, 0x14)
+	br, bg, bb := gl_px(16, 16)
+	assert br <= 1 && bg <= 1 && bb >= 254
+}
+
+// Bölge içindeki instance çizilir; bölge dışına taşmaz.
+fn test_draw_viewport_draws_instance_inside_region() {
+	mut w := open_gl_window() or { return }
+	defer { w.close() }
+	_, ch := w.size()
+	mut r := Renderer.new(16) or {
+		assert false, 'Renderer.new: ${err}'
+		return
+	}
+	defer { r.close() }
+	clear_color(0, 0, 0, 1)
+	clear(gl_color_buffer_bit)
+	mut buf := r.payload()
+	// rgba bellekte R,G,B,A: kırmızı = 0xFF000000 | 0xFF.
+	buf[0] = InstancePayload{
+		x:    0
+		y:    0
+		size: 60
+		rgba: 0xFF0000FF
+	}
+	r.draw_viewport(Camera{ view_h: 100 }, 0, 0, 32, 32, ch, 1)
+	finish()
+	cr, cg, cb := gl_px(16, ch - 1 - 16)
+	assert cr >= 254 && cg <= 1 && cb <= 1
+	// Bölge dışı (48, 16) siyah kalmalı.
+	or_, og, ob := gl_px(48, ch - 1 - 16)
+	assert or_ <= 1 && og <= 1 && ob <= 1
 }

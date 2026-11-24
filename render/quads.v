@@ -171,14 +171,7 @@ pub fn (mut r Renderer) draw(cam Camera, width int, height int, n u32) {
 	viewport(0, 0, width, height)
 	clear(gl_color_buffer_bit)
 	sx, sy := cam.scale(width, height) or { return }
-	count := if n > r.capacity { r.capacity } else { n }
-	use_program(r.program)
-	uniform4f(r.view_loc, cam.cx, cam.cy, sx, sy)
-	bind_buffer(gl_array_buffer, r.vbo)
-	buffer_sub_data(gl_array_buffer, 0, isize(count) * isize(sizeof(InstancePayload)), r.data.data)
-	bind_vertex_array(r.vao)
-	draw_arrays_instanced(gl_triangles, 0, 6, int(count))
-	r.draws++
+	r.draw_instances(cam, sx, sy, n)
 }
 
 // Koyu gri zemin: her karede temizleme bu rengi kullanır; GL varsayılanı siyahtır.
@@ -187,12 +180,11 @@ fn set_default_clear() {
 }
 
 // Yalnız (x, y, w, h) bölgesini surface_0 ile temizleyip çizer; bölge dışına dokunmaz.
-// x, y sol üst köken (fiziksel piksel). Viewport'u çağrıdan önceki haline geri yükler.
-pub fn (mut r Renderer) draw_viewport(cam Camera, x int, y int, w int, h int, n u32) {
+// x, y sol üst köken; fb_h framebuffer yüksekliği (y aşağı → GL'de fb_h - y - h). Viewport bölgede
+// kalır: sonraki çizim kendi viewport'unu ayarlamalı (Renderer.draw ve UiRenderer.draw ayarlar).
+pub fn (mut r Renderer) draw_viewport(cam Camera, x int, y int, w int, h int, fb_h int, n u32) {
 	sx, sy := cam.scale(w, h) or { return }
-	mut vp := [4]int{}
-	get_integerv(gl_viewport, voidptr(&vp))
-	gl_y := vp[3] - y - h
+	gl_y := fb_h - y - h
 	viewport(x, gl_y, w, h)
 	scissor(x, gl_y, w, h)
 	enable(gl_scissor_test)
@@ -201,6 +193,11 @@ pub fn (mut r Renderer) draw_viewport(cam Camera, x int, y int, w int, h int, n 
 	clear(gl_color_buffer_bit)
 	disable(gl_scissor_test)
 	set_default_clear()
+	r.draw_instances(cam, sx, sy, n)
+}
+
+// Instance tamponunu yükler ve tek instanced çizim yapar. Viewport ve temizleme çağırana aittir.
+fn (mut r Renderer) draw_instances(cam Camera, sx f32, sy f32, n u32) {
 	count := if n > r.capacity { r.capacity } else { n }
 	use_program(r.program)
 	uniform4f(r.view_loc, cam.cx, cam.cy, sx, sy)
@@ -209,7 +206,6 @@ pub fn (mut r Renderer) draw_viewport(cam Camera, x int, y int, w int, h int, n 
 	bind_vertex_array(r.vao)
 	draw_arrays_instanced(gl_triangles, 0, 6, int(count))
 	r.draws++
-	viewport(vp[0], vp[1], vp[2], vp[3])
 }
 
 // Kümülatif instanced çizim çağrısı sayısı.
