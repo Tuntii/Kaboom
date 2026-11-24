@@ -146,12 +146,15 @@ fn script_mouse(ctx &ui.Context, mut inp ui.Input, o GalleryOpts, frame int) {
 
 fn run_gallery(args []string) {
 	o := parse_gallery_opts(args)
+	// --scale verilirse pencere W*S x H*S fiziksel, DPI'dan bağımsız: her makinede aynı ekran görüntüsü.
+	phys_w := if o.scale > 0 { int(math.round(f64(o.width) * f64(o.scale))) } else { o.width }
+	phys_h := if o.scale > 0 { int(math.round(f64(o.height) * f64(o.scale))) } else { o.height }
 	mut win := platform.Window.new(platform.WindowConfig{
 		title:     'vcore gallery'
-		width:     o.width
-		height:    o.height
+		width:     phys_w
+		height:    phys_h
 		visible:   !o.hidden
-		dpi_aware: true
+		dpi_aware: o.scale == 0
 	}) or { gl_fail(err) }
 	defer {
 		win.close()

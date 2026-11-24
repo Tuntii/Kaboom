@@ -69,3 +69,33 @@ fn test_gallery_screenshot() {
 	}
 	assert quad_seen, 'sahne ortasinda quad piksel yok'
 }
+
+// --scale S: pencere W*S x H*S fiziksel (DPI'dan bağımsız); 320x200 mantıksal, 1.5 ölçek → 480x300 PNG.
+fn test_gallery_scale_sets_physical_size() {
+	tmp := os.join_path(os.temp_dir(), 'vcore_m4a_s_${os.getpid()}')
+	os.mkdir_all(tmp) or { panic(err) }
+	defer {
+		os.rmdir_all(tmp) or {}
+	}
+	exe := os.join_path(tmp, 'vcore.exe')
+	build := os.execute('"${@VEXE}" -gc none -subsystem console -o "${exe}" "${@VMODROOT}/cmd_main"')
+	assert build.exit_code == 0, build.output
+
+	shot_path := os.join_path(tmp, 'scaled.png')
+	old_wd := os.getwd()
+	os.chdir(tmp) or { panic(err) }
+	defer {
+		os.chdir(old_wd) or {}
+	}
+
+	run := os.execute('"${exe}" gallery --hidden --width 320 --height 200 --scale 1.5 --screenshot "${shot_path}"')
+	if run.exit_code == 3 && run.output.contains('GL yok') {
+		eprintln('atlandi: GL yok: ${run.output.trim_space()}')
+		return
+	}
+	assert run.exit_code == 0, run.output
+
+	png := os.read_bytes(shot_path) or { panic('scaled.png okunamadi: ${err}') }
+	w, h, _ := image.decode_png_stored(png) or { panic('PNG cozulemedi: ${err}') }
+	assert w == 480 && h == 300, 'PNG boyutu ${w}x${h}'
+}
