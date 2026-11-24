@@ -61,6 +61,7 @@ mut:
 	open    bool
 	tip     bool
 	last    NumberFieldResult
+	commits int
 }
 
 fn in_fmt(v f32, dec int) string {
@@ -1046,4 +1047,92 @@ fn test_keyboard_captured_while_editing() {
 	assert c.focused_id() == c.id('alan')
 	nf_once(mut c, Input{}, body)
 	assert c.keyboard_captured()
+}
+
+// Odak başka bir öğeye (panel) tıklamayla geçince bekleyen düzenleme tam bir kez commit edilir; sonraki karelerde yeniden yok.
+fn test_number_field_blur_commits_once() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		r := c.number_field_ex('n', mut &tp.value, NumberFieldOpts{})
+		if r.committed {
+			tp.commits++
+		}
+		if r.changed {
+			tp.changed++
+		}
+		c.open('scene', Box{
+			width:  fixed(200)
+			height: fixed(100)
+		})
+		c.close()
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id != 0
+	nf_once(mut c, in_text('5'), body)
+	assert t.commits == 0
+	nf_once(mut c, press_at(60, 60), body)
+	assert t.commits == 1
+	assert t.value == 5
+	assert c.num_id == 0
+	nf_once(mut c, release_at(60, 60), body)
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, Input{}, body)
+	assert t.commits == 1
+	assert t.changed == 1
+}
+
+// Ayrıştırılamayan metin (abc) + Enter: commit yok, değer değişmez.
+fn test_number_field_unparseable_not_committed() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 4
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	nf_once(mut c, in_text('abc'), body)
+	nf_once(mut c, in_key(.enter), body)
+	assert !t.last.committed
+	assert !t.last.changed
+	assert t.value == 4
+	assert c.num_id == 0
+}
+
+// Düzenlenirken dış değer 7 olur, kullanıcı "3" + Enter yazar: değer 3, commit ve changed.
+fn test_number_field_external_change_then_enter_commits() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 1
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			decimals: 0
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id != 0
+	t.value = 7
+	nf_once(mut c, in_text('3'), body)
+	nf_once(mut c, in_key(.enter), body)
+	assert t.value == 3
+	assert t.last.committed
+	assert t.last.changed
+	assert c.num_id == 0
 }

@@ -150,9 +150,22 @@ fn test_showcase_editor_interactions_zero_alloc() {
 	assert run.editing, 'x alani duzenlemeye gecmedi'
 	assert run.tip, 'Oynat ipucu gosterilmedi'
 }
+// Hata satırı yolu: alan explicit error metniyle çizilir; boşta bu karelerde 0 tahsis ve tam bir ipucu düğümü.
+const alloc_r_err = 'Sprite.r must be in [0, 1]'
 
-// Sprite.r [0, 1] dışındaysa editör sayfasında hata satırı görünür; boşta bu karelerde de tahsis yok.
-fn test_showcase_number_error_zero_alloc() {
+fn number_error_page(mut c Context, mut st ShowcaseState) {
+	c.property_row_begin('r')
+	c.number_field_ex('r', mut &st.r, NumberFieldOpts{
+		decimals: 2
+		step:     f32(0.01)
+		min:      0
+		max:      1
+		error:    alloc_r_err
+	})
+	c.property_row_end()
+}
+
+fn test_number_field_error_zero_alloc() {
 	if !memory.heap_tracking_enabled() {
 		eprintln('atlandi: -d track_heap ile calistir')
 		return
@@ -163,19 +176,19 @@ fn test_showcase_number_error_zero_alloc() {
 	st.r = 2
 	for k in 0 .. 5 {
 		c.begin(Input{ time_ms: f64(k) * 16 }, 1440, 900, 1.0)
-		showcase(mut c, mut st, .editor)
+		number_error_page(mut c, mut st)
 		c.end()
 	}
 	before := memory.heap_alloc_count()
 	for k in 5 .. 65 {
 		c.begin(Input{ time_ms: f64(k) * 16 }, 1440, 900, 1.0)
-		showcase(mut c, mut st, .editor)
+		number_error_page(mut c, mut st)
 		c.end()
 	}
 	assert memory.heap_alloc_count() - before == 0
 	mut hints := 0
 	for i in 0 .. c.n {
-		if c.nodes[i].kind == .text && c.nodes[i].text == showcase_r_err {
+		if c.nodes[i].kind == .text && c.nodes[i].text == alloc_r_err {
 			hints++
 		}
 	}
