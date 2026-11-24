@@ -343,6 +343,20 @@ pub fn (c &Context) node_overflow() u32 {
 	return c.overflow
 }
 
+// Son tamamlanan düzendeki dikdörtgen; kare denetimi yok (vitrin betiği kareler arası konum bulur).
+pub fn (c &Context) last_rect(label string) ?Rect {
+	h := c.probe(c.id(label))
+	if h < 0 || c.states[h].id != c.id(label) || c.states[h].rect_frame == 0 {
+		return none
+	}
+	return c.states[h].rect
+}
+
+// Bu karenin düğüm sayısı (ölçüm ve tanı için).
+pub fn (c &Context) node_count() u32 {
+	return u32(c.n)
+}
+
 // Etkileşim: hover, basış, tıklama (basış ve bırakma aynı kimlikte), sürükleme.
 // Kimlik odaklanabilirse çizim sırasına eklenir (Tab için).
 pub fn (mut c Context) interact(id u32, focusable bool) Interaction {
