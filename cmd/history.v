@@ -210,6 +210,10 @@ mut:
 	block_add   bool // blok başı add_component ise yalnız aynı (varlık, bileşen) set'leri atlanır
 	block_ent   ecs.EntityID
 	block_comp  u16
+	head_pending bool // son yakalanan komut bloğun ilk komutu; başarılıysa atlama kurulur
+	head_kind    CommandKind
+	head_ent     ecs.EntityID
+	head_comp    u16
 	stage_base  u32 // açık bloğun ters komutlarının stage_cmds'deki başlangıcı
 }
 
@@ -343,6 +347,12 @@ pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 	// Blok spawn ile başlıyorsa yalnız o spawn yakalanır (ters: despawn); bloğun geri kalanı onun içindedir.
 	first := h.in_block && h.block_head
 	h.block_head = false
+	h.head_pending = first
+	if first {
+		h.head_kind = c.kind
+		h.head_ent = c.entity
+		h.head_comp = c.comp
+	}
 	// Tek varlık kuralı: bir blok en fazla bir varlığın spawn/add'iyle başlar; atlama ona göre yapılır.
 	if h.block_skip && (!h.block_add || (c.kind == .set_field && c.entity == h.block_ent && c.comp == h.block_comp)) {
 		return
@@ -420,10 +430,6 @@ pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 		}
 	}
 	h.prepared = true
-	h.block_skip = first && (c.kind == .spawn || c.kind == .add_component)
-	h.block_add = first && c.kind == .add_component
-	h.block_ent = c.entity
-	h.block_comp = c.comp
 }
 
 // Yürütücü bir ters bloğu uygulamadan önce çağırır: blok komutları tek parça geçmişe girsin diye.
@@ -514,12 +520,21 @@ fn (mut h History) stage_block(t int, src &Command, n u32) {
 
 // Uygulamadan sonra çağrılır: başarılıysa hazırlanan bloğu açık gruba ekler. Grup dışında her blok kendi grubudur.
 pub fn (mut h History) commit_capture(r ApplyResult) {
+	head := h.head_pending
+	h.head_pending = false
 	if !h.prepared {
 		return
 	}
 	h.prepared = false
 	if r.status != .ok {
 		return
+	}
+	// Atlama yalnız blok başı başarıyla uygulandıysa kurulur: başarısız başın tersi yoktur, set'ler yakalanmalı.
+	if head {
+		h.block_skip = h.head_kind == .spawn || h.head_kind == .add_component
+		h.block_add = h.head_kind == .add_component
+		h.block_ent = h.head_ent
+		h.block_comp = h.head_comp
 	}
 	auto := h.depth == 0
 	if auto {

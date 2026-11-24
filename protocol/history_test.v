@@ -614,3 +614,37 @@ fn test_component_remove_cycles_keep_step_size() {
 	}
 	assert content_snapshot(&s) == start
 }
+
+// Ajan bileşeni çıkarır; script aynı bileşeni yeniden ekler; ajanın geri almasındaki ekleme başarısız olur.
+// Başarısız ekleme atlamayı kurmamalı: set'ler yakalanır, yineleme önceki içeriği geri koyar.
+fn test_failed_head_add_still_captures_sets() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	e := spawn_at(mut s, 3)
+	_ = hcall(mut s, rq(2, '"method":"component.add","params":{"entity":${e},"component":"Sprite","values":{"size":2}}'))
+	_ = hcall(mut s, rq(3, '"method":"component.remove","params":{"entity":${e},"component":"Sprite"}'))
+	// Script komutu geçmişe ve kayda girmez: doğrudan Sim kuyruğuna itilir.
+	s.engine.push(cmd.Command{
+		kind:   .add_component
+		source: .script
+		entity: ecs.EntityID(e)
+		comp:   ecs.sprite_id
+	})
+	_ = s.engine.flush()
+	before := sprite_size(mut s, e)
+	u := history_op(mut s, 'history.undo')
+	assert hpick(u, 'applied').as_bool()
+	assert hpick(u, 'failed').f64() == 1, 'başarısız ekleme sayılmalı: ${hstr(u)}'
+	assert sprite_size(mut s, e) == 2
+	r := history_op(mut s, 'history.redo')
+	assert hpick(r, 'applied').as_bool(), 'yineleme kaybolmamalı: ${hstr(r)}'
+	assert sprite_size(mut s, e) == before
+}
+
+// Sprite.size değeri (entity.get üzerinden).
+fn sprite_size(mut s Server, e u64) f64 {
+	resp := hcall(mut s, rq(1, '"method":"entity.get","params":{"entity":${e}}'))
+	return hpick(hpick(hpick(hresult(resp), 'components'), 'Sprite'), 'size').f64()
+}
