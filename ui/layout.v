@@ -117,6 +117,7 @@ mut:
 	next    int
 	slot    int
 	is_root bool
+	frozen  bool // grow dağıtımında min/max ile sabitlendi
 	text    string
 	role    TextRole
 	icon    Icon
@@ -250,22 +251,68 @@ fn (mut c Context) fit_axis(a int) {
 			}
 			ch = c.nodes[ch].next
 		}
-		mut share := f32(0)
 		if main && grow_n > 0 {
-			rem := inner - fixed_sum - nd.box.gap * f32(cnt - 1)
-			if rem > 0 {
-				share = rem / f32(grow_n)
-			}
+			c.distribute_grow(nd.first, inner - fixed_sum - nd.box.gap * f32(cnt - 1), a)
 		}
 		ch = nd.first
 		for ch >= 0 {
 			s := axis_size(c.nodes[ch].box, a)
-			c.nodes[ch].sz[a] = if main && s.kind == .grow {
-				clamp_size(s, share)
-			} else {
-				resolve_size(s, c.nodes[ch].intr[a], inner)
+			if !main || s.kind != .grow {
+				c.nodes[ch].sz[a] = resolve_size(s, c.nodes[ch].intr[a], inner)
 			}
 			ch = c.nodes[ch].next
+		}
+	}
+}
+
+// Ana eksende grow payları: min/max ile sabitlenen çocuklar düşülür, kalan alan yeniden paylaşılır; yeni sabitleme kalmayınca biter.
+fn (mut c Context) distribute_grow(first int, rem f32, a int) {
+	mut ch := first
+	for ch >= 0 {
+		c.nodes[ch].frozen = false
+		ch = c.nodes[ch].next
+	}
+	for {
+		mut free_n := 0
+		mut used := f32(0)
+		ch = first
+		for ch >= 0 {
+			if axis_size(c.nodes[ch].box, a).kind == .grow {
+				if c.nodes[ch].frozen {
+					used += c.nodes[ch].sz[a]
+				} else {
+					free_n++
+				}
+			}
+			ch = c.nodes[ch].next
+		}
+		if free_n == 0 {
+			return
+		}
+		share := if rem - used > 0 { (rem - used) / f32(free_n) } else { f32(0) }
+		mut changed := false
+		ch = first
+		for ch >= 0 {
+			s := axis_size(c.nodes[ch].box, a)
+			if s.kind == .grow && !c.nodes[ch].frozen {
+				v := clamp_size(s, share)
+				if v != share {
+					c.nodes[ch].frozen = true
+					c.nodes[ch].sz[a] = v
+					changed = true
+				}
+			}
+			ch = c.nodes[ch].next
+		}
+		if !changed {
+			ch = first
+			for ch >= 0 {
+				if axis_size(c.nodes[ch].box, a).kind == .grow && !c.nodes[ch].frozen {
+					c.nodes[ch].sz[a] = share
+				}
+				ch = c.nodes[ch].next
+			}
+			return
 		}
 	}
 }
@@ -344,15 +391,22 @@ fn (mut c Context) paint(i int, clip Rect) {
 		w: c.nodes[i].sz[0]
 		h: c.nodes[i].sz[1]
 	}
+	// Boş kırpma: alt ağaç çizilmez, boş kırpmalı komut üretilmez.
+	if clip.w <= 0 || clip.h <= 0 {
+		return
+	}
 	b := c.nodes[i].box
 	child_clip := if b.clip { clip.intersect(r) } else { clip }
-	if (u32(b.bg) & 0xFF) != 0 || (b.border_w > 0 && (u32(b.border) & 0xFF) != 0) {
-		c.emit_rect(r, clip, b)
-	}
-	match c.nodes[i].kind {
-		.text { c.emit_text(i, clip) }
-		.icon { c.emit_icon(i, clip) }
-		.plain {}
+	vis := clip.intersect(r)
+	if vis.w > 0 && vis.h > 0 {
+		if (u32(b.bg) & 0xFF) != 0 || (b.border_w > 0 && (u32(b.border) & 0xFF) != 0) {
+			c.emit_rect(r, clip, b)
+		}
+		match c.nodes[i].kind {
+			.text { c.emit_text(i, clip) }
+			.icon { c.emit_icon(i, clip) }
+			.plain {}
+		}
 	}
 
 	mut ch := c.nodes[i].first

@@ -271,3 +271,66 @@ fn test_node_overflow_counted() {
 	c.end()
 	assert c.node_overflow() > 0
 }
+
+fn test_grow_redistributes_after_max() {
+	mut atl := layout_atlas(1.0)
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	c.begin(Input{}, 500, 100, 1.0)
+	c.open('row', Box{ dir: .row, width: fixed(500), height: fixed(40) })
+	c.open('a', Box{
+		width:  Size{
+			kind: .grow
+			max:  120
+		}
+		height: fixed(10)
+		bg:     surface_1
+	})
+	c.close()
+	c.open('b', Box{ width: grow(), height: fixed(10), bg: surface_2 })
+	c.close()
+	c.close()
+	l := c.end()
+	assert find_rect(l, surface_1).w == 120
+	assert find_rect(l, surface_2).w == 380
+	assert find_rect(l, surface_2).x == 120
+}
+
+fn test_grow_min_raises_child() {
+	mut atl := layout_atlas(1.0)
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	c.begin(Input{}, 300, 100, 1.0)
+	c.open('row', Box{ dir: .row, width: fixed(300), height: fixed(40) })
+	c.open('a', Box{
+		width:  Size{
+			kind: .grow
+			min:  150
+		}
+		height: fixed(10)
+		bg:     surface_1
+	})
+	c.close()
+	c.open('b', Box{ width: grow(), height: fixed(10), bg: surface_2 })
+	c.close()
+	c.open('c', Box{ width: grow(), height: fixed(10), bg: surface_hover })
+	c.close()
+	c.close()
+	l := c.end()
+	assert find_rect(l, surface_1).w == 150
+	assert find_rect(l, surface_2).w == 75
+	assert find_rect(l, surface_hover).w == 75
+}
+
+// Kırpılmış ebeveynin dışındaki çocuk hiçbir komut üretmez.
+fn test_child_outside_clip_emits_nothing() {
+	mut atl := layout_atlas(1.0)
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	c.begin(Input{}, 300, 100, 1.0)
+	c.open('clipped', Box{ dir: .row, width: fixed(60), height: fixed(30), clip: true })
+	c.open('spacer', Box{ width: fixed(100), height: fixed(10) })
+	c.close()
+	c.open('outside', Box{ width: fixed(50), height: fixed(20), bg: surface_1 })
+	c.close()
+	c.close()
+	l := c.end()
+	assert l.len() == 0
+}
