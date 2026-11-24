@@ -145,6 +145,10 @@ fn script_mouse(ctx &ui.Context, mut inp ui.Input, o GalleryOpts, frame int) {
 }
 
 fn run_gallery(args []string) {
+	platform.begin_timer_period()
+	defer {
+		platform.end_timer_period()
+	}
 	o := parse_gallery_opts(args)
 	// --scale verilirse pencere W*S x H*S fiziksel, DPI'dan bağımsız: her makinede aynı ekran görüntüsü.
 	phys_w := if o.scale > 0 { int(math.round(f64(o.width) * f64(o.scale))) } else { o.width }

@@ -2,6 +2,7 @@ module protocol
 
 import sim
 import ecs
+import cmd
 import memory
 
 // İstek arenasının boyutu: her istek bu bölgede ayrıştırılır ve yanıtlanır. Taban 4 MiB; büyük kapasitede
@@ -59,6 +60,8 @@ mut:
 	req_region &u8
 	engine     sim.Sim
 	is_paused  bool
+	// İsteğin kaynağı (agent: stdin, editor: süreç içi); handle_from istek boyunca ayarlar.
+	source cmd.Source
 	// Ekran görüntüsü kancası: yalnız pencere varken (vcore run) kurulur.
 	capture ?fn (path string) !(int, int)
 }
@@ -85,6 +88,7 @@ pub fn Server.new(cfg sim.Config) !Server {
 		region:     region
 		req_region: req_region
 		engine:     engine
+		source:     .agent
 	}
 }
 
@@ -134,6 +138,16 @@ pub fn (mut s Server) set_capture(f fn (path string) !(int, int)) {
 // yanıt bir sonraki handle çağrısına kadar geçerlidir; kalıcı tutulacaksa çağıran kopyalamalıdır.
 // Arena dolarsa yanıt, arenaya ihtiyaç duymayan sabit bir -32600 satırıdır.
 pub fn (mut s Server) handle(line string) ?string {
+	return s.handle_from(line, .agent)
+}
+
+// handle ile aynı, ama istek ürettiği komutları verilen kaynakla etiketler (editör süreç içinden .editor gönderir).
+pub fn (mut s Server) handle_from(line string, source cmd.Source) ?string {
+	prev := s.source
+	s.source = source
+	defer {
+		s.source = prev
+	}
 	text := trim_view(line)
 	if text == '' {
 		return none

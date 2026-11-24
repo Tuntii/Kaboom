@@ -18,7 +18,8 @@ struct FieldWrite {
 
 // Bir bileşen ve yazimlari; spawn ve component.add bunu kuyruga çevirir.
 struct Plan {
-	comp   u16
+	comp u16
+mut:
 	writes []FieldWrite
 }
 
@@ -136,7 +137,9 @@ fn (mut s Server) entity_spawn(p Val) !Val {
 			if !c.is_object() {
 				return invalid_params('components.${name} must be an object of field values')
 			}
-			plans << s.plan_component(name, c)!
+			mut pl := s.plan_component(name, c)!
+			s.seed_transform_prev(mut pl)
+			plans << pl
 		}
 		c = c.next()
 	}
@@ -150,7 +153,7 @@ fn (mut s Server) entity_spawn(p Val) !Val {
 	}
 	s.commit([cmd.Command{
 		kind:   .spawn
-		source: .agent
+		source: s.source
 	}])!
 	e := s.engine.queue.result(0).entity
 	mut cmds := []cmd.Command{}
@@ -160,14 +163,14 @@ fn (mut s Server) entity_spawn(p Val) !Val {
 	for pl in plans {
 		cmds << cmd.Command{
 			kind:   .add_component
-			source: .agent
+			source: s.source
 			entity: e
 			comp:   pl.comp
 		}
 		for w in pl.writes {
 			cmds << cmd.Command{
 				kind:   .set_field
-				source: .agent
+				source: s.source
 				entity: e
 				comp:   pl.comp
 				field:  w.field
@@ -185,7 +188,7 @@ fn (mut s Server) entity_despawn(p Val) !Val {
 	e := entity_param(p)!
 	s.commit_one(cmd.Command{
 		kind:   .despawn
-		source: .agent
+		source: s.source
 		entity: e
 	})!
 	return empty_object()
@@ -217,7 +220,7 @@ fn (mut s Server) component_add(p Val) !Val {
 	mut cmds := [
 		cmd.Command{
 			kind:   .add_component
-			source: .agent
+			source: s.source
 			entity: e
 			comp:   plan.comp
 		},
@@ -228,7 +231,7 @@ fn (mut s Server) component_add(p Val) !Val {
 	for w in plan.writes {
 		cmds << cmd.Command{
 			kind:   .set_field
-			source: .agent
+			source: s.source
 			entity: e
 			comp:   plan.comp
 			field:  w.field
@@ -245,7 +248,7 @@ fn (mut s Server) component_remove(p Val) !Val {
 	comp := s.component_id(name)!
 	s.commit_one(cmd.Command{
 		kind:   .remove_component
-		source: .agent
+		source: s.source
 		entity: e
 		comp:   comp
 	})!
@@ -264,7 +267,7 @@ fn (mut s Server) component_set(p Val) !Val {
 	w := s.field_write(name, schema, fname, v)!
 	s.commit_one(cmd.Command{
 		kind:   .set_field
-		source: .agent
+		source: s.source
 		entity: e
 		comp:   comp
 		field:  w.field
@@ -457,7 +460,7 @@ fn (mut s Server) record_start() !Val {
 		return record_error('a recording is already active; call record.stop first')
 	}
 	if s.engine.tick() != 0 || s.engine.world.entities().high_water() != 0 {
-		return record_error('recording starts only on a pristine world (tick 0, no entities); call sim.reset first')
+		return record_error('recording starts only on a pristine world (tick 0, no entities); call sim.pause, then sim.reset, then record.start')
 	}
 	s.engine.recorder.start()
 	return empty_object()
@@ -543,6 +546,31 @@ fn (s &Server) plan_component(name string, values Val) !Plan {
 		comp:   id
 		writes: writes
 	}
+}
+
+// Transform verilen spawn'da prev_x/prev_y'yi x/y ile tohumlar: ilk karede interpolasyon sıçramaz.
+// İç yazım: prev alanları protokol girişinde readonly, ama bu yol field_write'dan geçmez.
+fn (s &Server) seed_transform_prev(mut pl Plan) {
+	if pl.comp != ecs.transform_id {
+		return
+	}
+	schema := s.reg.component(pl.comp) or { return }
+	xi := schema.field_index('x') or { return }
+	yi := schema.field_index('y') or { return }
+	pxi := schema.field_index('prev_x') or { return }
+	pyi := schema.field_index('prev_y') or { return }
+	// Verilmeyen x/y 0 kalır: bileşen varsayılanı da 0 bitidir.
+	mut xb := u64(0)
+	mut yb := u64(0)
+	for w in pl.writes {
+		if w.field == xi {
+			xb = w.bits
+		} else if w.field == yi {
+			yb = w.bits
+		}
+	}
+	pl.writes << FieldWrite{ field: pxi, bits: xb }
+	pl.writes << FieldWrite{ field: pyi, bits: yb }
 }
 
 // Tek bir alan yazımını doğrular: alan adı, readonly, tip, aralık.

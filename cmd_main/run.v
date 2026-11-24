@@ -107,6 +107,10 @@ fn capture_frame(path string) !(int, int) {
 
 // Pencereli döngü: stdin ayrı thread'de okunur, GL ana thread'de çalışır.
 fn run_window(args []string) {
+	platform.begin_timer_period()
+	defer {
+		platform.end_timer_period()
+	}
 	o := parse_run_opts(args)
 	mut srv := protocol.Server.new(sim.Config{ capacity: o.capacity }) or {
 		eprintln('vcore: ${err}')
