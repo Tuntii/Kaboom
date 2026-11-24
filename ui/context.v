@@ -8,6 +8,7 @@ const off_base = 0
 const off_target = 4
 const off_collapsed = 5
 const off_start = 8
+const off_open = 5 // menü açık (menü kimliği bölümle çakışmaz)
 
 // Kalıcı durum: kimlikle anahtarlı; 2 kare görülmeyen girdi end()'de silinir.
 struct StateSlot {
@@ -17,6 +18,8 @@ mut:
 	rect_frame u32
 	rect       Rect
 	scroll     f32
+	tip_on     bool // ipucu: imleç bu kimlikteyken
+	tip_since  f64  // ipucu: üzerinde durma başlangıcı
 	data       [16]u8 // widget'a özel alan
 }
 
@@ -108,6 +111,18 @@ mut:
 	drag_dx      f32
 	drag_dy      f32
 	cursor       CursorHint
+	last_id      u32 // en son açılan kutunun kimliği (ipucu hedefi)
+	edit_id      u32 // düzenlenen metin/sayı alanı; odakla birlikte değişir
+	edit_buf     TextBuf // sayı alanı düzenleme metni
+	edit_snap    TextBuf // metin alanı: odak anındaki metin (Esc geri alır)
+	edit_cur     int
+	edit_fresh   bool // sayı alanı: ilk yazım metni değiştirir
+	num_moved    bool // bu basışta sürükleme oldu mu (tıklama düzenlemeye geçmez)
+	num_bufs     [64][32]u8 // sayı alanı görüntü metinleri; kare başına döner
+	num_n        int
+	menu_cur     u32 // son menu_button kimliği (menu_item kapatır)
+	menu_alpha   f32 // açık menünün opaklığı
+	tip_shown    bool
 }
 
 pub fn Context.new(atlas &Atlas, max_nodes u32, max_cmds u32) !Context {
@@ -144,6 +159,8 @@ pub fn (mut c Context) begin(input Input, width f32, height f32, scale f32) {
 	c.hit_cur = 0
 	c.focus_n = 0
 	c.cursor = .arrow
+	c.num_n = 0
+	c.tip_shown = false
 	c.list.clear()
 	c.tab_focus()
 	if input.pressed[0] && c.hit_prev == 0 {
@@ -184,6 +201,7 @@ pub fn (mut c Context) end() &DrawList {
 
 pub fn (mut c Context) open(label string, b Box) u32 {
 	id := c.id(label)
+	c.last_id = id
 	if c.skip > 0 {
 		c.skip++
 		c.overflow++
@@ -326,6 +344,11 @@ pub fn (c &Context) node_overflow() u32 {
 // Etkileşim: hover, basış, tıklama (basış ve bırakma aynı kimlikte), sürükleme.
 // Kimlik odaklanabilirse çizim sırasına eklenir (Tab için).
 pub fn (mut c Context) interact(id u32, focusable bool) Interaction {
+	return c.interact_kb(id, focusable, true)
+}
+
+// key_click false: odaktaki Enter/Space tıklama üretmez (metin ve sayı alanları kendi tuşlarını işler).
+fn (mut c Context) interact_kb(id u32, focusable bool, key_click bool) Interaction {
 	c.touch(id)
 	if focusable && c.focus_n < c.focus_cur.len {
 		c.focus_cur[c.focus_n] = id
@@ -349,7 +372,7 @@ pub fn (mut c Context) interact(id u32, focusable bool) Interaction {
 		}
 	}
 	// Odaktayken Enter/Space etkinleştirir (klavye erişilebilirliği).
-	if focusable && c.focus == id && (c.key_pressed(.enter) || c.key_pressed(.space)) {
+	if key_click && focusable && c.focus == id && (c.key_pressed(.enter) || c.key_pressed(.space)) {
 		clicked = true
 	}
 	return Interaction{

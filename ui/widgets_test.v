@@ -49,6 +49,7 @@ fn wgt_frame(mut c Context, inp Input, body fn (mut c Context)) {
 	warm.pressed = [3]bool{}
 	warm.released = [3]bool{}
 	warm.key_count = 0
+	warm.char_count = 0
 	warm.wheel_y = 0
 	c.begin(warm, 400, 300, 1.0)
 	body(mut c)

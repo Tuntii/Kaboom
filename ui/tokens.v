@@ -94,6 +94,7 @@ pub const toolbar_h = f32(40)
 pub const statusbar_h = f32(24)
 pub const icon_size = f32(16)
 pub const splitter_w = f32(4)
+pub const num_field_w = f32(96)
 
 pub enum FontFace {
 	sans
