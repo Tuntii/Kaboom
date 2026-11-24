@@ -292,6 +292,26 @@ fn test_load_error_data_names_entity_component_field() {
 	assert pick(data, 'field').str() == 'prev_y'
 }
 
+// Sonlu olmayan sayı hatası (metin değeri) da varlık, bileşen ve alanı adlandırır: -32602 sözleşmesi.
+fn test_load_nonfinite_error_names_entity_component_field() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	path := write_scene_file('nonfinite.vscene', '{"format":"vscene","version":1,"entities":[{"components":{"Transform":{"x":1}}},{"components":{"Transform":{"x":"abc"}}}]}')
+	reply := load_reply(mut s, path)
+	assert error_code(reply) == -32602
+	data := pick(pick(reply, 'error'), 'data')
+	assert pick(data, 'entity_index').f64() == 1
+	assert pick(data, 'component').str() == 'Transform'
+	assert pick(data, 'field').str() == 'x'
+}
+
 fn test_load_refused_while_recording() {
 	dir := scene_load_dir()
 	os.rmdir_all(dir) or {}

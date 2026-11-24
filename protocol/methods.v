@@ -139,7 +139,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'scene.load'
 		params: '{"path": string}'
-		result: '{"entities": [id, ...]}; dosya tamamen doğrulanır, sonra dünya sıfırlanıp kurulur ve geçmiş temizlenir; hata -32602 (data: entity_index, component, field), 1006, 1008 ya da io_error (1010); hiçbiri dünyayı değiştirmez'
+		result: '{"entities": [id, ...]}; dosya tamamen doğrulanır, sonra dünya sıfırlanıp kurulur ve geçmiş temizlenir; hatalar: -32602 (biçim, aralık, sonlu olmayan sayı; varlık ve alan hatalarında data: entity_index, component, field), -32603 (bellek), 1002 bilinmeyen bileşen, 1003 bilinmeyen alan, 1006 kapasite, 1007 kuyruk dolu, 1008 kayıt aktif, 1009 readonly alan, 1010 io_error; doğrulama hataları dünyayı değiştirmez'
 	},
 ]
 
@@ -797,7 +797,7 @@ fn (s &Server) field_write(name string, schema ecs.ComponentSchema, fname string
 		return invalid_params('field ${name}.${fname} has type ${f.typ.name()}, only f32 is supported over JSON')
 	}
 	if scene && v.is_string() {
-		special := scene_nonfinite(v) or { return invalid_params('${name}.${fname} must be a finite number') }
+		special := scene_nonfinite(v) or { return finite_error(name, fname) }
 		if f.ranged {
 			return range_error(name, fname, f)
 		}
@@ -806,7 +806,7 @@ fn (s &Server) field_write(name string, schema ecs.ComponentSchema, fname string
 			bits:  u64(math.f32_bits(f32(special)))
 		}
 	}
-	bits := f32_bits(v) or { return invalid_params('${name}.${fname} must be a finite number') }
+	bits := f32_bits(v) or { return finite_error(name, fname) }
 	x := v.f64()
 	if f.ranged && x != x {
 		return range_error(name, fname, f)
@@ -818,6 +818,13 @@ fn (s &Server) field_write(name string, schema ecs.ComponentSchema, fname string
 		field: u16(fi)
 		bits:  bits
 	}
+}
+
+// Sonlu olmayan ya da sayı olmayan değer: -32602, bileşen ve alan adıyla (scene yolunda varlık indeksi scene_error ile eklenir).
+fn finite_error(name string, fname string) RpcError {
+	d := component_field_ref(name, fname)
+	d.set('hint', str_val('${name}.${fname} must be a finite number'))
+	return rpc_error(code_invalid_params, 'invalid params', d)
 }
 
 fn range_error(name string, fname string, f ecs.FieldSchema) RpcError {
