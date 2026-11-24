@@ -6,6 +6,7 @@ import sim
 import ui
 
 // Boşta (girdi ve istek yok) editör karesi kararlı durumda heap tahsisi yapmaz; -d track_heap ile anlamlıdır.
+// Seçili varlık ve görünür gizmo (seçim çerçevesi, üç tutamaç) dahildir.
 fn test_idle_frames_zero_alloc() {
 	if !memory.heap_tracking_enabled() {
 		eprintln('atlandi: -d track_heap ile calistir')
@@ -20,11 +21,24 @@ fn test_idle_frames_zero_alloc() {
 	mut atl := ui.Atlas.build(1.0) or { panic(err) }
 	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
 	mut e := Editor.new('')
+	srv.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":0,"y":0},"Sprite":{"size":4}}}}') or {
+		panic('yanit yok')
+	}
+	mut fr := EditorFrame{}
 	for k in 0 .. 10 {
 		c.begin(ui.Input{ mouse_x: -1, mouse_y: -1, time_ms: f64(k) * 16 }, 1440, 900, 1.0)
+		fr = e.frame(mut c, mut srv)
+		c.end()
+	}
+	// Seçim: merkeze tıklama (üzerine gel, bas, bırak); sonra boşta kareler.
+	r := fr.scene
+	sx, sy := e.cam.world_to_screen(r, 0, 0)
+	for inp in [ui.Input{ mouse_x: sx, mouse_y: sy }, press_input(sx, sy), release_input(sx, sy)] {
+		c.begin(inp, 1440, 900, 1.0)
 		e.frame(mut c, mut srv)
 		c.end()
 	}
+	assert e.sv.sel != none, 'gizmo testinin önkoşulu: varlık seçili'
 	before := memory.heap_alloc_count()
 	for k in 10 .. 110 {
 		c.begin(ui.Input{ mouse_x: -1, mouse_y: -1, time_ms: f64(k) * 16 }, 1440, 900, 1.0)
@@ -32,4 +46,17 @@ fn test_idle_frames_zero_alloc() {
 		c.end()
 	}
 	assert memory.heap_alloc_count() - before == 0
+}
+
+fn press_input(x f32, y f32) ui.Input {
+	mut inp := ui.Input{ mouse_x: x, mouse_y: y }
+	inp.down[0] = true
+	inp.pressed[0] = true
+	return inp
+}
+
+fn release_input(x f32, y f32) ui.Input {
+	mut inp := ui.Input{ mouse_x: x, mouse_y: y }
+	inp.released[0] = true
+	return inp
 }

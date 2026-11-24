@@ -23,6 +23,7 @@ typedef struct {
 	int ctrl;
 	int shift;
 	int alt;
+	int space;
 	int focused;
 } VcoreInput;
 

@@ -74,6 +74,10 @@ pub const selection_bg = Color(0x3D6FD62E)
 pub const danger = Color(0xE5484DFF)
 pub const warning = Color(0xF5A524FF)
 
+// Gizmo eksen renkleri: düşük doygunluk, taşıma tutamaçlarını seçim vurgusundan ayırır.
+pub const axis_x = Color(0xC9736EFF)
+pub const axis_y = Color(0x7FB069FF)
+
 // Aralık.
 pub const space_1 = f32(4)
 pub const space_2 = f32(8)

@@ -2,6 +2,7 @@ module editor
 
 import os
 import ui
+import ecs
 import protocol
 import sim
 
@@ -210,4 +211,39 @@ fn test_valid_scene_loads_without_error() {
 	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
 	assert e.load_error() == '', 'hata olmamali: ${e.load_error()}'
 	assert srv.world().alive_count() == 1
+}
+
+// f32 metni: %.9g; tam sayı ondalıksız, ondalık ve üçte bir bit-eşit (9 basamak); sonlu olmayan istek kurmaz.
+fn test_req_buf_f32_and_entity_text() {
+	mut r := ReqBuf{}
+	r.begin('component.set')
+	r.param_entity('entity', ecs.make_entity(7, 2))
+	r.param_f32('a', 100)
+	r.param_f32('b', 0.1)
+	r.param_f32('c', f32(1) / f32(3))
+	r.param_f32('d', -2.5)
+	assert r.end() == '{"jsonrpc":"2.0","id":1,"method":"component.set","params":{"entity":8589934599,"a":100,"b":0.1,"c":0.33333334,"d":-2.5}}'
+	assert f32(0.33333334) == f32(1) / f32(3), 'kısa metin f32 değerini geri okutur'
+	// Protokolün f32_text'iyle aynı biçim (aynı değerler, aynı metin).
+	for v in [f32(0.1), f32(1) / f32(3), f32(12345.678), f32(1e-7), f32(-2.5), f32(3e38), f32(100), f32(-7), f32(0)] {
+		mut q := ReqBuf{}
+		q.begin('component.set')
+		q.param_f32('v', v)
+		assert q.end().contains('"v":${protocol.f32_text(v)}}'), 'biçim: ${protocol.f32_text(v)}'
+	}
+
+	mut bad := ReqBuf{}
+	bad.begin('component.set')
+	zero := f32(0)
+	bad.param_f32('v', zero / zero)
+	assert bad.end() == '', 'NaN istek kurmaz'
+}
+
+// Durum metni kesimi UTF-8 kod noktası sınırında: çok baytlı harf ortadan bölünmez.
+fn test_put_str_respects_utf8_boundary() {
+	mut buf := [status_cap]u8{}
+	s := 'a'.repeat(159) + 'ş' // ş iki bayt: 159 + 2 = 161 > 160
+	n := put_str(mut buf, 0, s)
+	assert n == 159, 'sınır geri çekilmeli: ${n}'
+	assert buf[158] == `a`
 }

@@ -41,6 +41,7 @@ fn to_ui_input(f platform.InputFrame, scale f32, now_ms f64) ui.Input {
 		ctrl:     f.ctrl
 		shift:    f.shift
 		alt:      f.alt
+		space:    f.space
 		time_ms:  now_ms
 	}
 	for i in 0 .. f.vkey_count {

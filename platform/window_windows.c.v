@@ -113,6 +113,7 @@ mut:
 	ctrl       int
 	shift      int
 	alt        int
+	space      int
 	focused    int
 }
 
@@ -228,6 +229,7 @@ fn record_input(hwnd voidptr, msg u32, wp usize, lp isize) {
 		p.ctrl = key_down(0x11) // VK_CONTROL
 		p.shift = key_down(0x10) // VK_SHIFT
 		p.alt = key_down(0x12) // VK_MENU
+		p.space = key_down(0x20) // VK_SPACE: tutulan durum (pan için)
 	}
 }
 
@@ -364,6 +366,7 @@ pub fn (mut w Window) input() InputFrame {
 		ctrl:       p.ctrl != 0
 		shift:      p.shift != 0
 		alt:        p.alt != 0
+		space:      p.space != 0
 		focused:    p.focused != 0
 	}
 	for i in 0 .. 3 {

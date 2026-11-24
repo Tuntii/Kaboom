@@ -27,9 +27,8 @@ pub struct Editor {
 mut:
 	left_w     f32
 	right_w    f32
-	cam_cx     f32
-	cam_cy     f32
-	view_h     f32
+	cam        EditorCamera
+	sv         SceneState
 	path       ui.TextBuf
 	started    bool
 	timed      bool
@@ -42,12 +41,14 @@ mut:
 }
 
 // Yeni editör: panel genişlikleri 240/300, kamera 0,0 görünüm yüksekliği 40, seçim yok.
-// shortcut: yol 256 baytlık TextBuf'a sığmazsa kırpılır ve sahne yüklenemez (sessizce); upgrade: Görev 9 yol ayrı tutulunca.
+// shortcut: yol 256 baytlık TextBuf'a sığmazsa kod noktası sınırında kırpılır; kırpılmış yol yüklenirken dosya bulunamaz hatası görünür. upgrade: Görev 9 yol ayrı tutulunca.
 pub fn Editor.new(scene_path string) Editor {
 	mut e := Editor{
 		left_w:  panel_left_w
 		right_w: panel_right_w
-		view_h:  cam_view_h
+		cam:     EditorCamera{
+			view_h: cam_view_h
+		}
 	}
 	e.path.set(scene_path)
 	return e
@@ -96,6 +97,7 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 		e.started = true
 		// Açılışta duraklatılır: oynat/adım düğmeleri ilerlemeyi açıkça yönetir.
 		send_plain(mut srv, 'sim.pause')
+		e.sv.fields = resolve_scene_fields(srv.registry()) or { panic(err) }
 		if e.path.len > 0 {
 			e.load_scene(mut srv)
 		}
@@ -103,6 +105,9 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 	e.measure(c.input().time_ms)
 	e.toolbar(mut c, mut srv)
 	e.body(mut c)
+	// Sahne görünümü: önceki karenin sahne dikdörtgeni (düzen bir kare geriden; ilk karede sıfır, işlem yok).
+	scene := c.prev_rect(c.id('scene')) or { ui.Rect{} }
+	e.scene_view(mut c, mut srv, scene)
 	// Kısayollar alanlar çizildikten sonra: klavye bir alandaysa (ui.Context.shortcut) atlanır.
 	if c.shortcut(.f5) {
 		if srv.paused() {
@@ -125,12 +130,11 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 		c.statusbar_text(e.status_text())
 	}
 	c.statusbar_end()
-	scene := c.prev_rect(c.id('scene')) or { ui.Rect{} }
 	return EditorFrame{
 		scene:      scene
-		cam_cx:     e.cam_cx
-		cam_cy:     e.cam_cy
-		cam_view_h: e.view_h
+		cam_cx:     e.cam.cx
+		cam_cy:     e.cam.cy
+		cam_view_h: e.cam.view_h
 		cursor:     c.cursor_hint()
 	}
 }
@@ -251,13 +255,18 @@ fn (mut e Editor) format_status(srv &protocol.Server) {
 	e.status_len = n
 }
 
-// Sığmayan bayt kesilir (durum metni en fazla status_cap bayt); dönen değer yeni uzunluktur.
+// Sığmayan bayt kesilir (en fazla status_cap bayt); kesim UTF-8 kod noktası sınırına geri çekilir (ui.TextBuf.set gibi).
+// Dönen değer yeni uzunluktur.
 fn put_str(mut out [status_cap]u8, at int, s string) int {
+	mut take := s.len
+	if at + take > status_cap {
+		take = status_cap - at
+	}
+	for take > 0 && take < s.len && (s[take] & 0xC0) == 0x80 {
+		take--
+	}
 	mut n := at
-	for i in 0 .. s.len {
-		if n >= status_cap {
-			break
-		}
+	for i in 0 .. take {
 		out[n] = s[i]
 		n++
 	}

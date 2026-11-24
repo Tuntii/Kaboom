@@ -69,6 +69,7 @@ pub mut:
 	ctrl       bool
 	shift      bool
 	alt        bool
+	space      bool // Boşluk basılı (tutulan durum; keys kenar olaylarıdır)
 	time_ms    f64
 }
 

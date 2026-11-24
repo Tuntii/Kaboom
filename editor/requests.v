@@ -1,7 +1,16 @@
 module editor
 
+import ecs
+import math
+
+// strtof: protocol/scene.v ile aynı C bağlaması (yuvarlama IEEE ile; metin → f32 bit-eşit kontrolü).
+fn C.strtof(s &char, endp voidptr) f32
+
 // İstek satırı kurucusu: sabit tampon, tahsis yok. Yanıt handle_from'un istek arenasında yaşar.
 const req_cap = 1024
+
+// f32 en büyük sonlu değeri: bunun ötesi (ve NaN, inf) JSON sayısı değildir, istek kurulmaz.
+const editor_f32_max = f64(3.4028234663852886e+38)
 
 pub struct ReqBuf {
 mut:
@@ -29,20 +38,54 @@ pub fn (mut r ReqBuf) param_int(key string, v int) {
 	if v < 0 {
 		r.put_byte(`-`)
 	}
-	mut mag := if v < 0 { u64(-i64(v)) } else { u64(v) }
-	mut digits := [20]u8{}
-	mut k := 0
-	for {
-		digits[k] = u8(48 + mag % 10)
-		k++
-		mag /= 10
-		if mag == 0 {
-			break
-		}
+	r.put_uint(if v < 0 { u64(-i64(v)) } else { u64(v) })
+}
+
+// Varlık kimliği: 48 bitlik işaretsiz tamsayı (indeks ve nesil), ondalık.
+pub fn (mut r ReqBuf) param_entity(key string, e ecs.EntityID) {
+	r.sep()
+	r.put('"')
+	r.put(key)
+	r.put('":')
+	r.put_uint(u64(e))
+}
+
+// f32 değeri, protocol.f32_text ile aynı metin: en kısa, bit-eşit geri okunan ondalık (1..9 basamak). Tahsissiz
+// (yığın tamponu, strtof). Sonlu olmayan değer istek kurmaz.
+pub fn (mut r ReqBuf) param_f32(key string, v f32) {
+	x := f64(v)
+	if x != x || x > editor_f32_max || x < -editor_f32_max {
+		r.failed = true
+		return
 	}
-	for k > 0 {
-		k--
-		r.put_byte(digits[k])
+	r.sep()
+	r.put('"')
+	r.put(key)
+	r.put('":')
+	// Tam sayılar sabit noktada (%g 100'ü 1e+02 yazar); -0 ayrı tutulur (protocol.f32_text ile aynı).
+	if x == math.floor(x) && math.abs(x) < 1e7 {
+		if math.f32_bits(v) == 0x80000000 {
+			r.put('-0')
+			return
+		}
+		if x < 0 {
+			r.put_byte(`-`)
+		}
+		r.put_uint(u64(math.abs(x)))
+		return
+	}
+	mut buf := [32]u8{}
+	unsafe {
+		mut n := 0
+		for p in 1 .. 10 {
+			n = C.snprintf(&char(&buf[0]), 32, &char('%.*g'.str), p, x)
+			if C.strtof(&char(&buf[0]), nil) == v {
+				break
+			}
+		}
+		for i in 0 .. n {
+			r.put_byte(buf[i])
+		}
 	}
 }
 
@@ -92,6 +135,24 @@ fn (mut r ReqBuf) sep() {
 fn (mut r ReqBuf) put(s string) {
 	for i in 0 .. s.len {
 		r.put_byte(s[i])
+	}
+}
+
+fn (mut r ReqBuf) put_uint(v u64) {
+	mut digits := [20]u8{}
+	mut k := 0
+	mut x := v
+	for {
+		digits[k] = u8(48 + x % 10)
+		k++
+		x /= 10
+		if x == 0 {
+			break
+		}
+	}
+	for k > 0 {
+		k--
+		r.put_byte(digits[k])
 	}
 }
 
