@@ -183,6 +183,36 @@ pub fn (g &GroupView) block(i int) []Command {
 	return v
 }
 
+// Açık bir grubun yakalanmış blokları: komutlar ve blok aralıkları, grup 0'dan başlar.
+struct Stage {
+mut:
+	cmds &Command
+	blks &HistoryBlock
+	cap  u32
+	n    u32
+	b    u32
+	over bool
+	t    int // hedef yığın (0 undo, 1 redo); -1 açık grup yok
+}
+
+fn Stage.new(mut parent memory.LinearArena, cap u32) ?Stage {
+	cmds := parent.alloc_aligned(u64(cap) * u64(sizeof(Command)), 8) or { return none }
+	blks := parent.alloc_aligned(u64(cap) * u64(sizeof(HistoryBlock)), 8) or { return none }
+	return Stage{
+		cmds: unsafe { &Command(cmds) }
+		blks: unsafe { &HistoryBlock(blks) }
+		cap:  cap
+		t:    -1
+	}
+}
+
+fn (mut s Stage) reset() {
+	s.n = 0
+	s.b = 0
+	s.over = false
+	s.t = -1
+}
+
 // Geçmiş çekirdeği: yakalanan ters komutlar. Hepsi kurulumda ayrılan belleği kullanır; tick yolu tahsis yapmaz.
 pub struct History {
 mut:
@@ -195,14 +225,11 @@ mut:
 	scratch_cap u32
 	scratch_n   u32
 	stacks      [2]HistoryStack // 0 undo, 1 redo
-	// Açık grup yığınlara girmeden buraya birikir: sığmayan grup hiçbir eski grubu düşürmez.
-	stage_cmds  &Command
-	stage_blks  &HistoryBlock
-	stage_cap   u32
-	stage_n     u32
-	stage_b     u32
-	stage_over  bool
-	stage_t     int // açık grubun hedef yığını (0 undo, 1 redo); -1 açık grup yok
+	// Açık grup yığınlara girmeden hazırlama alanlarında birikir: sığmayan grup hiçbir eski grubu düşürmez.
+	// stg[0] editör grubu ve düz (istek ya da otomatik) gruplar; stg[1] editör grubu açıkken gelen ajan isteği.
+	stg         [2]Stage
+	cur         int  // yakalamanın yazıldığı hazırlama alanı (0 ya da 1)
+	iso         bool // ajan isteği kendi grubunda (stg[1]) açık
 	// Yürütücünün ters bloğu: blok spawn ile başlıyorsa yalnız bu spawn'ın ters işlemi (despawn) yakalanır.
 	in_block    bool
 	block_head  bool
@@ -214,7 +241,7 @@ mut:
 	head_kind    CommandKind
 	head_ent     ecs.EntityID
 	head_comp    u16
-	stage_base  u32 // açık bloğun ters komutlarının stage_cmds'deki başlangıcı
+	stage_base  u32 // açık bloğun ters komutlarının etkin hazırlama alanındaki başlangıcı
 }
 
 // Bir bloğun en büyük boyu: spawn/despawn ters bloğu, her bileşen için add ve her alan için set.
@@ -241,11 +268,11 @@ pub fn History.new(mut parent memory.LinearArena, reg &ecs.Registry, capacity u3
 		parent.rewind(m)
 		return none
 	}
-	stage_cmds := parent.alloc_aligned(u64(capacity) * u64(sizeof(Command)), 8) or {
+	stage0 := Stage.new(mut parent, capacity) or {
 		parent.rewind(m)
 		return none
 	}
-	stage_blks := parent.alloc_aligned(u64(capacity) * u64(sizeof(HistoryBlock)), 8) or {
+	stage1 := Stage.new(mut parent, capacity) or {
 		parent.rewind(m)
 		return none
 	}
@@ -258,10 +285,7 @@ pub fn History.new(mut parent memory.LinearArena, reg &ecs.Registry, capacity u3
 		scratch:     unsafe { &Command(scratch) }
 		scratch_cap: bound
 		stacks:      [undo, redo]!
-		stage_cmds:  unsafe { &Command(stage_cmds) }
-		stage_blks:  unsafe { &HistoryBlock(stage_blks) }
-		stage_cap:   capacity
-		stage_t:     -1
+		stg:         [stage0, stage1]!
 	}
 }
 
@@ -271,7 +295,7 @@ pub fn History.bytes_needed(reg &ecs.Registry, capacity u32, max_groups u32) u64
 		u64(max_groups) * u64(sizeof(HistoryGroup))
 	stage := u64(capacity) * u64(sizeof(Command)) + u64(capacity) * u64(sizeof(HistoryBlock))
 	scratch := u64(scratch_bound(reg)) * u64(sizeof(Command))
-	return 2 * per_stack + stage + scratch + 9 * 64
+	return 2 * per_stack + 2 * stage + scratch + 11 * 64
 }
 
 // Kullanıcı adımı başlar. Derinlik sayacı: iç içe çağrılar dış grubu bekler.
@@ -289,25 +313,45 @@ pub fn (mut h History) end_group() {
 	}
 	h.depth--
 	if h.depth == 0 {
-		h.close_group()
+		h.close_stage(0)
 	}
 }
 
-// Açık grubu hedef yığına yerleştirir. Taşmışsa hiçbir yığına dokunmadan düşürülmüş sayılır.
-fn (mut h History) close_group() {
-	if h.stage_t == -1 {
+// İstek grubu. Editör grubu açıkken (depth > 0) ajan isteği (isolate) kendi hazırlama alanında kurulur:
+// editör grubuna karışmaz, bitince yığına kendi grubu olarak girer. Diğer durumlarda begin_group ile aynıdır.
+pub fn (mut h History) begin_request(isolate bool) {
+	if !isolate || h.depth == 0 {
+		h.begin_group()
 		return
 	}
-	t := h.stage_t
-	if h.stage_over {
-		h.stacks[t].dropped++
-	} else if h.stage_b > 0 {
-		h.stacks[t].push_group(h.stage_cmds, h.stage_n, h.stage_blks, h.stage_b)
+	h.iso = true
+	h.cur = 1
+	h.fresh = true
+}
+
+// begin_request ile açılanı kapatır: izole istek kendi grubunu yığına iter, diğeri end_group'tur.
+pub fn (mut h History) end_request() {
+	if h.iso {
+		h.iso = false
+		h.close_stage(1)
+		h.cur = 0
+		return
 	}
-	h.stage_t = -1
-	h.stage_n = 0
-	h.stage_b = 0
-	h.stage_over = false
+	h.end_group()
+}
+
+// Hazırlama alanının grubunu hedef yığına yerleştirir. Taşmışsa hiçbir yığına dokunmadan düşürülmüş sayılır.
+fn (mut h History) close_stage(i int) {
+	t := h.stg[i].t
+	if t == -1 {
+		return
+	}
+	if h.stg[i].over {
+		h.stacks[t].dropped++
+	} else if h.stg[i].b > 0 {
+		h.stacks[t].push_group(h.stg[i].cmds, h.stg[i].n, h.stg[i].blks, h.stg[i].b)
+	}
+	h.stg[i].reset()
 }
 
 pub fn (mut h History) set_mode(m HistoryMode) {
@@ -441,22 +485,22 @@ pub fn (mut h History) begin_block() {
 	h.in_block = true
 	h.block_head = true
 	h.block_skip = false
-	h.stage_base = h.stage_n
+	h.stage_base = h.stg[h.cur].n
 }
 
 // Bloğun tüm ters komutları tek bir staged blok olur: geri alma/yineleme adımı blok sayısından bağımsız kalır.
 pub fn (mut h History) end_block() {
-	if h.in_block && h.stage_t != -1 && !h.stage_over && h.stage_n > h.stage_base {
-		if h.stage_b >= h.stage_cap {
-			h.stage_over = true
+	if h.in_block && h.stg[h.cur].t != -1 && !h.stg[h.cur].over && h.stg[h.cur].n > h.stage_base {
+		if h.stg[h.cur].b >= h.stg[h.cur].cap {
+			h.stg[h.cur].over = true
 		} else {
 			unsafe {
-				h.stage_blks[h.stage_b] = HistoryBlock{
+				h.stg[h.cur].blks[h.stg[h.cur].b] = HistoryBlock{
 					start: u64(h.stage_base)
-					n:     h.stage_n - h.stage_base
+					n:     h.stg[h.cur].n - h.stage_base
 				}
 			}
-			h.stage_b++
+			h.stg[h.cur].b++
 		}
 	}
 	h.in_block = false
@@ -466,56 +510,56 @@ pub fn (mut h History) end_block() {
 
 // Blok içinde ters komutu mevcut blokların önüne ekler: sonradan yakalananlar önce uygulanır (ters sıra).
 fn (mut h History) prepend_inverse(t int, src &Command, n u32) {
-	if h.stage_t == -1 {
-		h.stage_t = t
+	if h.stg[h.cur].t == -1 {
+		h.stg[h.cur].t = t
 	}
-	if h.stage_over {
+	if h.stg[h.cur].over {
 		return
 	}
-	if h.stage_n + n > h.stage_cap {
-		h.stage_over = true
+	if h.stg[h.cur].n + n > h.stg[h.cur].cap {
+		h.stg[h.cur].over = true
 		return
 	}
-	mut i := h.stage_n
+	mut i := h.stg[h.cur].n
 	for i > h.stage_base {
 		i--
 		unsafe {
-			h.stage_cmds[i + n] = h.stage_cmds[i]
+			h.stg[h.cur].cmds[i + n] = h.stg[h.cur].cmds[i]
 		}
 	}
 	for k in 0 .. n {
 		unsafe {
-			h.stage_cmds[h.stage_base + k] = src[k]
+			h.stg[h.cur].cmds[h.stage_base + k] = src[k]
 		}
 	}
-	h.stage_n += n
+	h.stg[h.cur].n += n
 }
 
 // Hazırlama alanına blok ekler. Hedef yığın grubun ilk bloğunda sabitlenir; sonraki bloklar aynı yığına gider.
 fn (mut h History) stage_block(t int, src &Command, n u32) {
-	if h.stage_t == -1 {
-		h.stage_t = t
+	if h.stg[h.cur].t == -1 {
+		h.stg[h.cur].t = t
 	}
-	if h.stage_over {
+	if h.stg[h.cur].over {
 		return
 	}
-	if h.stage_n + n > h.stage_cap || h.stage_b >= h.stage_cap {
-		h.stage_over = true
+	if h.stg[h.cur].n + n > h.stg[h.cur].cap || h.stg[h.cur].b >= h.stg[h.cur].cap {
+		h.stg[h.cur].over = true
 		return
 	}
 	for i in 0 .. n {
 		unsafe {
-			h.stage_cmds[h.stage_n + i] = src[i]
+			h.stg[h.cur].cmds[h.stg[h.cur].n + i] = src[i]
 		}
 	}
 	unsafe {
-		h.stage_blks[h.stage_b] = HistoryBlock{
-			start: u64(h.stage_n)
+		h.stg[h.cur].blks[h.stg[h.cur].b] = HistoryBlock{
+			start: u64(h.stg[h.cur].n)
 			n:     n
 		}
 	}
-	h.stage_b++
-	h.stage_n += n
+	h.stg[h.cur].b++
+	h.stg[h.cur].n += n
 }
 
 // Uygulamadan sonra çağrılır: başarılıysa hazırlanan bloğu açık gruba ekler. Grup dışında her blok kendi grubudur.
@@ -566,14 +610,14 @@ pub fn (mut h History) commit_capture(r ApplyResult) {
 
 // En yeni undo grubunu çıkarır. Dönen görünüm halka belleğine bakar; değiştirmeden önce kopyalanmalıdır.
 pub fn (mut h History) pop_undo() ?GroupView {
-	if h.stage_t != -1 {
+	if h.stg[0].t != -1 {
 		return none
 	}
 	return h.stacks[0].pop()
 }
 
 pub fn (mut h History) pop_redo() ?GroupView {
-	if h.stage_t != -1 {
+	if h.stg[0].t != -1 {
 		return none
 	}
 	return h.stacks[1].pop()
@@ -587,38 +631,35 @@ pub fn (mut h History) remap(old ecs.EntityID, new ecs.EntityID) {
 }
 
 // Açık grubun yakalanmış blokları (ters sırada: block(0) en son blok). Yığın okunmaz, hazırlama alanı okunur.
+// Editör grubunun (stg[0]) blokları; ajan isteği grubu (stg[1]) burada görünmez.
 pub fn (h &History) staged() GroupView {
 	return GroupView{
-		cmds:   h.stage_cmds
-		blocks: h.stage_blks
-		cap:    u64(h.stage_cap)
+		cmds:   h.stg[0].cmds
+		blocks: h.stg[0].blks
+		cap:    u64(h.stg[0].cap)
 		bstart: 0
-		bend:   u64(h.stage_b)
+		bend:   u64(h.stg[0].b)
 	}
 }
 
 // Açık grup kapasiteyi aştıysa blokların bir kısmı yakalanmamıştır; staged eksik kalır.
 pub fn (h &History) stage_overflowed() bool {
-	return h.stage_over
+	return h.stg[0].over
 }
 
 // Açık grubu hiçbir yığına koymadan atar ve derinliği sıfırlar. Çağıran önce staged ile blokları okumalıdır.
 pub fn (mut h History) abandon_group() {
 	h.depth = 0
-	h.stage_t = -1
-	h.stage_n = 0
-	h.stage_b = 0
-	h.stage_over = false
+	h.stg[0].reset()
 }
 
+// Her iki hazırlama alanı ve yığınlar temizlenir; izole istek durumuna dokunulmaz (açıksa kendi end'i kapatır).
 pub fn (mut h History) clear() {
 	h.stacks[0].reset()
 	h.stacks[1].reset()
 	h.prepared = false
-	h.stage_t = -1
-	h.stage_n = 0
-	h.stage_b = 0
-	h.stage_over = false
+	h.stg[0].reset()
+	h.stg[1].reset()
 }
 
 pub fn (h &History) undo_len() int {

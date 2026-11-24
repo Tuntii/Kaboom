@@ -60,6 +60,8 @@ mut:
 	sel     int
 	open    bool
 	tip     bool
+	last    NumberFieldResult
+	commits int
 }
 
 fn in_fmt(v f32, dec int) string {
@@ -802,4 +804,595 @@ fn test_backspace_repeat_deletes_again() {
 	assert t.buf.str() == 'ab'
 	wgt_frame(mut c, in_key_rep(.backspace), body)
 	assert t.buf.str() == 'a'
+}
+
+// Tek geçiş: olaylar yalnızca bu karede işlenir (sürükleme olaylarının hangi karede geldiği ölçülebilsin).
+fn nf_once(mut c Context, inp Input, body fn (mut c Context)) {
+	c.begin(inp, 400, 300, 1.0)
+	body(mut c)
+	c.end()
+}
+
+fn nf_held(x f32, y f32) Input {
+	mut inp := mouse_at(x, y)
+	inp.down[0] = true
+	return inp
+}
+
+fn nf_text_nodes(c &Context, s string) int {
+	mut n := 0
+	for i in 0 .. c.n {
+		if c.nodes[i].kind == .text && c.nodes[i].text == s {
+			n++
+		}
+	}
+	return n
+}
+
+fn nf_glyphs_with(l &DrawList, col u32) int {
+	mut n := 0
+	for i in 0 .. l.len() {
+		cmd := l.at(i)
+		if cmd.kind == u32(DrawKind.glyph) && cmd.color == col {
+			n++
+		}
+	}
+	return n
+}
+
+fn nf_rects_with_border(l &DrawList, col u32) int {
+	mut n := 0
+	for i in 0 .. l.len() {
+		cmd := l.at(i)
+		if cmd.kind == u32(DrawKind.rect) && cmd.border_color == col {
+			n++
+		}
+	}
+	return n
+}
+
+// Sürükleme: eşik karesi drag_started (ve değer değişir), tutulan kare olay üretmez, bırakma drag_ended.
+fn test_number_field_drag_events() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{ step: 1 })
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, nf_held(20, 10), body)
+	assert t.last.drag_started
+	assert t.last.changed
+	assert t.value == 2.5
+	nf_once(mut c, nf_held(20, 10), body)
+	assert !t.last.drag_started
+	assert !t.last.changed
+	assert !t.last.drag_ended
+	nf_once(mut c, release_at(20, 10), body)
+	assert t.last.drag_ended
+	assert !t.last.drag_started
+	nf_once(mut c, Input{}, body)
+	assert !t.last.drag_ended
+	assert !t.last.drag_started
+	assert !t.last.changed
+	assert !t.last.drag_cancelled
+}
+
+// Sürükleme sırasında Esc: değer başlangıca döner, drag_cancelled bildirilir; bırakma drag_ended üretmez.
+fn test_number_field_drag_cancel_reports() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 5
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{ step: 1 })
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, nf_held(20, 10), body)
+	assert t.value == 7.5
+	mut esc := nf_held(20, 10)
+	esc.keys[0] = .escape
+	esc.key_count = 1
+	nf_once(mut c, esc, body)
+	assert t.last.drag_cancelled
+	assert !t.last.drag_ended
+	assert t.last.changed
+	assert t.value == 5
+	nf_once(mut c, release_at(20, 10), body)
+	assert !t.last.drag_ended
+	assert !t.last.drag_cancelled
+	assert c.num_id == 0
+	assert t.value == 5
+}
+
+// Tıkla-bırak sonrası "3" + Enter: committed ve changed birlikte bildirilir.
+fn test_number_field_typed_commit_reports() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id != 0
+	nf_once(mut c, in_text('3'), body)
+	assert !t.last.committed
+	nf_once(mut c, in_key(.enter), body)
+	assert t.last.committed
+	assert t.last.changed
+	assert t.value == 3
+	nf_once(mut c, Input{}, body)
+	assert !t.last.committed
+	assert !t.last.changed
+}
+
+// Salt okunur: tıklama, sürükleme ve yazma değeri değiştirmez, odak almaz, metin text_muted çizilir.
+fn test_number_field_readonly_ignores_input() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 4
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			readonly: true
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	assert c.focused_id() == 0
+	nf_once(mut c, nf_held(60, 10), body)
+	nf_once(mut c, release_at(60, 10), body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id == 0
+	nf_once(mut c, in_text('9'), body)
+	nf_once(mut c, in_key(.enter), body)
+	assert t.value == 4
+	assert !t.last.changed
+	assert !t.last.drag_started
+	assert !t.last.committed
+	assert nf_glyphs_with(c.list, u32(text_muted)) > 0
+	assert nf_glyphs_with(c.list, u32(text_primary)) == 0
+}
+
+// Hata: kenarlık danger, altında danger renkli hata metni (glifleri) bir satır olarak çizilir.
+fn test_number_field_error_draws_hint() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 2
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			error: 'Sprite.r must be in [0, 1]'
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, Input{}, body)
+	assert nf_rects_with_border(c.list, u32(danger)) > 0
+	assert nf_text_nodes(&c, 'Sprite.r must be in [0, 1]') == 1
+	assert nf_glyphs_with(c.list, u32(danger)) > 0
+}
+
+// Odaktaki alan dışarıdan değişirse düzenleme bitene kadar kullanıcının metni görünür; Esc sonrası yeni değer.
+fn test_number_field_external_change_while_editing() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 3
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			decimals: 0
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id != 0
+	t.value = 7
+	nf_once(mut c, Input{}, body)
+	assert c.num_id != 0
+	assert nf_text_nodes(&c, '3') == 1
+	assert nf_text_nodes(&c, '7') == 0
+	assert t.value == 7
+	nf_once(mut c, in_key(.escape), body)
+	assert c.num_id == 0
+	assert t.value == 7
+	nf_once(mut c, Input{}, body)
+	assert nf_text_nodes(&c, '7') == 1
+	assert nf_text_nodes(&c, '3') == 0
+}
+
+// Düzenleme modunda klavye yakalanır (sayı ve metin alanı); düzenleme bitince serbest.
+fn test_keyboard_captured_while_editing() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{})
+		c.text_field('alan', mut tp.buf, 120)
+	}
+	nf_once(mut c, Input{}, body)
+	assert !c.keyboard_captured()
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.keyboard_captured()
+	nf_once(mut c, in_key(.enter), body)
+	assert !c.keyboard_captured()
+	nf_once(mut c, in_key(.tab), body)
+	assert c.focused_id() == c.id('n')
+	nf_once(mut c, in_key(.tab), body)
+	assert c.focused_id() == c.id('alan')
+	nf_once(mut c, Input{}, body)
+	assert c.keyboard_captured()
+}
+
+// Odak başka bir öğeye (panel) tıklamayla geçince bekleyen düzenleme tam bir kez commit edilir; sonraki karelerde yeniden yok.
+fn test_number_field_blur_commits_once() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		r := c.number_field_ex('n', mut &tp.value, NumberFieldOpts{})
+		if r.committed {
+			tp.commits++
+		}
+		if r.changed {
+			tp.changed++
+		}
+		c.open('scene', Box{
+			width:  fixed(200)
+			height: fixed(100)
+		})
+		c.close()
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id != 0
+	nf_once(mut c, in_text('5'), body)
+	assert t.commits == 0
+	nf_once(mut c, press_at(60, 60), body)
+	assert t.commits == 1
+	assert t.value == 5
+	assert c.num_id == 0
+	nf_once(mut c, release_at(60, 60), body)
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, Input{}, body)
+	assert t.commits == 1
+	assert t.changed == 1
+}
+
+// Ayrıştırılamayan metin (abc) + Enter: commit yok, değer değişmez.
+fn test_number_field_unparseable_not_committed() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 4
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	nf_once(mut c, in_text('abc'), body)
+	nf_once(mut c, in_key(.enter), body)
+	assert !t.last.committed
+	assert !t.last.changed
+	assert t.value == 4
+	assert c.num_id == 0
+}
+
+// Düzenlenirken dış değer 7 olur, kullanıcı "3" + Enter yazar: değer 3, commit ve changed.
+fn test_number_field_external_change_then_enter_commits() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 1
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			decimals: 0
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	nf_once(mut c, release_at(10, 10), body)
+	assert c.num_id != 0
+	t.value = 7
+	nf_once(mut c, in_text('3'), body)
+	nf_once(mut c, in_key(.enter), body)
+	assert t.value == 3
+	assert t.last.committed
+	assert t.last.changed
+	assert c.num_id == 0
+}
+
+struct MenuKbProbe {
+mut:
+	open bool
+	sel  int
+}
+
+fn menu_key_at(k Key, t f64) Input {
+	mut inp := Input{
+		time_ms: t
+	}
+	inp.keys[0] = k
+	inp.key_count = 1
+	return inp
+}
+
+// Fareyle açılan menüde Aşağı ×2 ikinci öğeyi vurgular, Enter seçer; Esc kapatır.
+fn test_menu_keyboard_navigation() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			if c.menu_item('bir') {
+				tp.sel = 1
+			}
+			if c.menu_item('iki') {
+				tp.sel = 2
+			}
+			if c.menu_item('üç') {
+				tp.sel = 3
+			}
+			c.menu_end()
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(5, 5), 1000), body)
+	wgt_frame(mut c, timed(press_at(5, 5), 1000), body)
+	wgt_frame(mut c, timed(release_at(5, 5), 1000), body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.down, 1200), 1200), body)
+	wgt_frame(mut c, timed(menu_key_at(.down, 1200), 1200), body)
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1200), 1200), body)
+	assert t.sel == 2
+	wgt_frame(mut c, timed(mouse_at(300, 200), 1300), body)
+	assert !t.open
+
+	// Yeniden aç; Aşağı ile vurgu taşınır, Esc menüyü kapatır (seçim olmaz).
+	wgt_frame(mut c, timed(mouse_at(5, 5), 1400), body)
+	wgt_frame(mut c, timed(press_at(5, 5), 1400), body)
+	wgt_frame(mut c, timed(release_at(5, 5), 1400), body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.down, 1500), 1500), body)
+	wgt_frame(mut c, timed(menu_key_at(.escape, 1500), 1500), body)
+	assert !t.open
+	assert t.sel == 2
+}
+
+// Klavyeyle açılan menü: Tab ile tetikleyici, Enter açar (ilk öğe vurgulu), Aşağı, Enter ikinci öğeyi seçer.
+fn test_keyboard_opened_menu_selects_second_item() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			if c.menu_item('bir') {
+				tp.sel = 1
+			}
+			if c.menu_item('iki') {
+				tp.sel = 2
+			}
+			c.menu_end()
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(300, 200), 1000), body)
+	wgt_frame(mut c, timed(menu_key_at(.tab, 1000), 1000), body)
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1100), 1100), body)
+	assert t.open
+	assert t.sel == 0
+	wgt_frame(mut c, timed(menu_key_at(.down, 1200), 1200), body)
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1300), 1300), body)
+	assert t.sel == 2
+	wgt_frame(mut c, timed(mouse_at(300, 200), 1400), body)
+	assert !t.open
+}
+
+// Menü açıkken odaktaki düğme (menünün arkasında) Enter ile tetiklenmez; menü klavyeyi sahiplenir.
+fn test_open_menu_blocks_focused_button_enter() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	mut clicks := 0
+	mut cp := &clicks
+	body := fn [mut tp, mut cp] (mut c Context) {
+		if c.button('arka', .secondary) {
+			unsafe {
+				*cp = *cp + 1
+			}
+		}
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			if c.menu_item('bir') {
+				tp.sel = 1
+			}
+			c.menu_end()
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(press_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(release_at(10, 42), 1000), body)
+	assert t.open
+	// Odak düğmede (kare dışı odak ataması); menü açıkken Enter düğmeyi tetiklemez.
+	c.focus = c.id('arka')
+	c.focus_visible = true
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1300), 1300), body)
+	assert clicks == 0
+	assert t.open
+}
+
+// Menü açıkken Tab odağı menünün arkasına taşımaz: menü sekmeyi sahiplenir.
+fn test_open_menu_tab_does_not_leave_menu() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		c.button('arka', .secondary)
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			c.menu_item('bir')
+			c.menu_end()
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(press_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(release_at(10, 42), 1000), body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.tab, 1200), 1200), body)
+	assert c.focused_id() == 0
+	assert t.open
+}
+
+struct KbFieldProbe {
+mut:
+	v    f32
+	sel  int
+	open bool
+}
+
+// Düzenleme durumundaki sayı alanı (odak atanır: fare basışı odağı ve düzenlemeyi bırakır) ve açık menü.
+// Aşağı ile ilk öğe vurgulanır; sonraki tuşlar menü ya da alana gider.
+fn kb_field_body(mut tp &KbFieldProbe) fn (mut c Context) {
+	return fn [mut tp] (mut c Context) {
+		c.number_field('n', mut &tp.v, '', 2, 0.1, 0, 0)
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			if c.menu_item('bir') {
+				tp.sel = 1
+			}
+			c.menu_end()
+		}
+	}
+}
+
+fn kb_field_setup(mut c Context, body fn (mut c Context)) {
+	wgt_frame(mut c, timed(mouse_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(press_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(release_at(10, 42), 1000), body)
+	c.focus = c.id('n')
+	c.focus_visible = false
+	c.begin_num(c.id('n'), 5, 2)
+}
+
+// Düzenlenen alanın üzerinde menü açıkken Enter: menü öğesi seçilir, alan onaylanmaz ve düzenleme sürer.
+fn test_open_menu_enter_does_not_commit_field() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := KbFieldProbe{v: 5}
+	mut tp := &t
+	body := kb_field_body(mut tp)
+	kb_field_setup(mut c, body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.down, 1200), 1200), body)
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1300), 1300), body)
+	assert t.sel == 1
+	wgt_frame(mut c, timed(mouse_at(300, 200), 1400), body)
+	assert !t.open
+	assert t.v == 5
+	assert c.num_id == c.id('n')
+}
+
+// Düzenlenen alanın üzerinde menü açıkken Esc: menü kapanır, alan metni ve düzenleme değişmez.
+fn test_open_menu_esc_keeps_field_editing() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := KbFieldProbe{v: 5}
+	mut tp := &t
+	body := kb_field_body(mut tp)
+	kb_field_setup(mut c, body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.escape, 1200), 1200), body)
+	assert !t.open
+	assert t.v == 5
+	assert c.num_id == c.id('n')
+	assert c.num_buf.str() == '5.00'
+}
+
+// Menü bir karede açık çizilip sonraki karede hiç çizilmezse, ondan sonraki kare klavyeyi geri alır.
+// Kareler elle sürülür (wgt_frame ara kare ekler ve durumu temizlerdi).
+fn test_menu_gone_releases_keyboard_next_frame() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	mut clicks := 0
+	mut cp := &clicks
+	with_menu := fn [mut tp, mut cp] (mut c Context) {
+		if c.button('arka', .secondary) {
+			unsafe {
+				*cp = *cp + 1
+			}
+		}
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			c.menu_end()
+		}
+	}
+	without_menu := fn [mut cp] (mut c Context) {
+		if c.button('arka', .secondary) {
+			unsafe {
+				*cp = *cp + 1
+			}
+		}
+	}
+	c.begin(timed(mouse_at(10, 42), 1000), 400, 300, 1.0)
+	with_menu(mut c)
+	c.end()
+	c.begin(timed(press_at(10, 42), 1000), 400, 300, 1.0)
+	with_menu(mut c)
+	c.end()
+	c.begin(timed(release_at(10, 42), 1000), 400, 300, 1.0)
+	with_menu(mut c)
+	c.end()
+	assert t.open
+	c.focus = c.id('arka')
+	c.focus_visible = true
+	// Menü çizilmeyen kare (F+1): kare tuşları bu karede menüye ait sayılır (bir kare gecikme), düğme ateşlenmez.
+	c.begin(Input{}, 400, 300, 1.0)
+	without_menu(mut c)
+	c.end()
+	// F+2: menü yok, Enter düğmeye gider.
+	c.begin(menu_key_at(.enter, 1200), 400, 300, 1.0)
+	without_menu(mut c)
+	c.end()
+	assert clicks == 1
 }

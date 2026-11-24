@@ -1,5 +1,9 @@
 module ui
 
+// Kimlik sözleşmesi: etiket = kimlik. Aynı ebeveyn altında aynı etiket aynı durumu (kaydırma, açık/kapalı,
+// etkileşim) paylaşır. Tekrarlanan öğeler (liste satırı, inspector'da varlık başına) push_id(n) ile
+// ayrılır, ör. inspector'da push_id(int(entity_index)); pop_id ile kapanır. Kimlik çakışması sessizdir.
+
 import math
 
 const fnv_offset = u32(2166136261)
@@ -11,6 +15,16 @@ const off_target = 4
 const off_collapsed = 5
 const off_start = 8
 const off_open = 5 // menü açık (menü kimliği bölümle çakışmaz)
+// Sayı alanı (hover kullanmaz): sürükleme başlangıç değeri f32, sürükleniyor ve Esc ile iptal bayrakları.
+const off_num_v0 = 0
+const off_num_drag = 4
+const off_num_cancel = 5
+// Bölüm: varsayılan durumu uygulandı mı (ilk karede default_open'dan kurulur).
+const off_sec_init = 6
+// Menü tetikleyicisi: vurgulu öğe dizini (255 = yok) ve son karedeki öğe sayısı (klavye gezintisi).
+const off_menu_hl = 6
+const off_menu_n = 7
+const menu_none = u8(255)
 
 // Kalıcı durum: kimlikle anahtarlı; 2 kare görülmeyen girdi end()'de silinir.
 struct StateSlot {
@@ -106,10 +120,17 @@ mut:
 	hit_prev     u32 // bir önceki karenin sonucu
 	active       u32 // sol tuşla basılmış kimlik
 	focus        u32
-	focus_cur    [64]u32 // bu karenin odaklanabilir kimlikleri, çizim sırasıyla
+	focus_cur    []u32 // bu karenin odaklanabilir kimlikleri, çizim sırasıyla (max_focus kapasiteli)
 	focus_n      int
-	focus_prev   [64]u32
+	focus_prev   []u32 // önceki kare; end() ikisini takas eder (kopya ve tahsis yok)
 	focus_prev_n int
+	max_focus    int
+	state_ovf    u32 // durum tablosu ya da odak listesi dolu iken yapılan istek sayısı (sessiz düşme yok)
+	visited      u32 // bu karede çizim geçişinin ziyaret ettiği (görünür) düğüm sayısı
+	vl_bottom    f32 // sanal liste: alt boşluk yüksekliği (virtual_list_end kullanır)
+	menu_idx     int  // açık menüde işlenen öğe sayısı (bu karede)
+	kb_menu      bool // açık menü bu karede klavyeyi sahiplenir (önceki karenin durumu; menü tuşları diğer widget'lara gitmez)
+	kb_menu_next bool // bu karede bir menü açıksa bir sonraki kare için kb_menu
 	drag_dx      f32
 	drag_dy      f32
 	cursor       CursorHint
@@ -139,19 +160,36 @@ pub fn Context.new(atlas &Atlas, max_nodes u32, max_cmds u32) !Context {
 		return error('ui: max_nodes sıfır olamaz')
 	}
 	n := int(max_nodes)
+	// Odak listesi düğüm sayısının dörtte biri kadar (en az 64); taşma state_overflow'a sayılır.
+	max_focus := if n / 4 > 64 { n / 4 } else { 64 }
 	return Context{
 		// shortcut: atlas Context ömrü boyunca canlı kalmalı (çağıran sahibi), @[heap] yerine unsafe
-		atl:     unsafe { atlas }
-		nodes:   []Node{len: n}
-		stack:   []int{len: n + 1}
-		states:  []StateSlot{len: n * 2}
-		scratch: []StateSlot{len: n * 2}
-		list:    DrawList.new(max_cmds)
+		atl:        unsafe { atlas }
+		nodes:      []Node{len: n}
+		stack:      []int{len: n + 1}
+		states:     []StateSlot{len: n * 2}
+		scratch:    []StateSlot{len: n * 2}
+		list:       DrawList.new(max_cmds)
+		max_focus:  max_focus
+		focus_cur:  []u32{len: max_focus}
+		focus_prev: []u32{len: max_focus}
 	}
+}
+
+// Durum tablosu ya da odak listesi dolu iken biriken istek sayısı (tablo büyüklüğü yetersizliğinin tanısı).
+pub fn (c &Context) state_overflow() u32 {
+	return c.state_ovf
+}
+
+// Son çizim geçişinde ziyaret edilen (görünür) düğüm sayısı; kırpma ayrıntısı için tanı.
+pub fn (c &Context) paint_visits() u32 {
+	return c.visited
 }
 
 // Mantıksal pencere boyutu; kök düğüm bu boyuttadır.
 pub fn (mut c Context) begin(input Input, width f32, height f32, scale f32) {
+	// Ölçek atlas ölçeğinden farklıysa glifler yanlış boyda çizilir; çağıran hatası, sessizce geçilmez.
+	assert math.abs(scale - c.atl.scale()) <= 0.001, 'ui: begin ölçeği atlas ölçeğiyle eşleşmiyor'
 	c.drag_dx = input.mouse_x - c.inp.mouse_x
 	c.drag_dy = input.mouse_y - c.inp.mouse_y
 	c.inp = input
@@ -163,6 +201,10 @@ pub fn (mut c Context) begin(input Input, width f32, height f32, scale f32) {
 	c.depth = 0
 	c.skip = 0
 	c.overflow = 0
+	c.visited = 0
+	c.menu_idx = 0
+	c.kb_menu = c.kb_menu_next
+	c.kb_menu_next = false
 	c.id_top = 0
 	c.id_over = 0
 	c.hit_cur = 0
@@ -203,7 +245,7 @@ pub fn (mut c Context) end() &DrawList {
 		}
 	}
 	c.hit_prev = c.hit_cur
-	c.focus_prev = c.focus_cur
+	c.focus_prev, c.focus_cur = c.focus_cur, c.focus_prev
 	c.focus_prev_n = c.focus_n
 	if c.inp.released[0] {
 		c.active = 0
@@ -378,9 +420,13 @@ pub fn (mut c Context) interact(id u32, focusable bool) Interaction {
 // mouse_focus: basış bu kimliğe odak verir (metin ve sayı alanları).
 fn (mut c Context) interact_kb(id u32, focusable bool, key_click bool, mouse_focus bool) Interaction {
 	c.touch(id)
-	if focusable && c.focus_n < c.focus_cur.len {
-		c.focus_cur[c.focus_n] = id
-		c.focus_n++
+	if focusable {
+		if c.focus_n < c.focus_cur.len {
+			c.focus_cur[c.focus_n] = id
+			c.focus_n++
+		} else {
+			c.state_ovf++
+		}
 	}
 	hovered := c.hit_prev == id && c.hovered_prev(id)
 	if c.inp.pressed[0] && hovered {
@@ -471,11 +517,15 @@ fn motion_value(base f32, target bool, start f64, now f64) f32 {
 	return if target { base + (1 - base) * e } else { base * (1 - e) }
 }
 
-// Bölüm açık/kapalı durumu; açıksa true. Tıklama durumu çevirir.
-fn (mut c Context) section_open(id u32, clicked bool) bool {
+// Bölüm açık/kapalı durumu; açıksa true. Tıklama durumu çevirir. İlk karede default_open'dan kurulur.
+fn (mut c Context) section_open(id u32, clicked bool, default_open bool) bool {
 	h := c.touch(id)
 	if h < 0 {
 		return true
+	}
+	if !c.states[h].flag(off_sec_init) {
+		c.states[h].set_flag(off_sec_init, true)
+		c.states[h].set_flag(off_collapsed, !default_open)
 	}
 	if clicked {
 		c.states[h].set_flag(off_collapsed, !c.states[h].flag(off_collapsed))
@@ -561,6 +611,8 @@ fn (c &Context) probe(id u32) int {
 fn (mut c Context) touch(id u32) int {
 	h := c.probe(id)
 	if h < 0 {
+		// Dolu tablo: çağıran durumsuz davranır (sürükleme olayları atlanır); sayaç bunu görünür kılar.
+		c.state_ovf++
 		return -1
 	}
 	if c.states[h].id == 0 {
@@ -570,8 +622,16 @@ fn (mut c Context) touch(id u32) int {
 	return h
 }
 
-// Bu karede k tuşu basıldı mı (Input.keys kenar olayları; otomatik tekrar sayılmaz).
+// Bu karede k tuşu basıldı mı. Açık menü (kb_menu) Tab/Enter/Space/Esc/Ok tuşlarını sahiplenir: diğer widget'lar bunları görmez.
 fn (c &Context) key_pressed(k Key) bool {
+	if c.kb_menu && (k == .enter || k == .space || k == .escape || k == .up || k == .down || k == .tab) {
+		return false
+	}
+	return c.raw_key(k)
+}
+
+// Menünün kendi tuşları ve sahiplik dışı sorgular: Input.keys kenar olayları (otomatik tekrar sayılmaz).
+fn (c &Context) raw_key(k Key) bool {
 	for i in 0 .. c.inp.key_count {
 		if c.inp.keys[i] == k && !c.inp.key_repeat[i] {
 			return true
@@ -598,6 +658,12 @@ fn (mut c Context) drop_stale() {
 	if c.txt_id != 0 && !c.seen_now(c.txt_id) {
 		c.txt_id = 0
 	}
+}
+
+// Metin ya da sayı alanı düzenleniyorken true: editör kısayolları bu karede atlanmalı.
+// Alanlar kendi karesinde çizilirken güncellenir; çağıran kareyi alan çizimlerinden sonra sorgulamalı.
+pub fn (c &Context) keyboard_captured() bool {
+	return c.txt_id != 0 || c.num_id != 0
 }
 
 // Önceki karenin dikdörtgeni imleci içeriyor mu.

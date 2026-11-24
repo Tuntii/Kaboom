@@ -226,7 +226,8 @@ mut:
 }
 
 // Karakter ve tuşları tampona uygular; imleç bayt konumu kod noktası sınırında kalır.
-fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
+// menu: açık menü klavyeyi sahiplenir; alan Enter/Esc ve yazılan karakterleri görmez (kb_menu).
+fn edit_keys(mut buf TextBuf, cur0 int, inp Input, menu bool) (EditOut, int) {
 	mut out := EditOut{}
 	mut cur := cur0
 	if cur > buf.len {
@@ -234,7 +235,7 @@ fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
 	}
 	for i in 0 .. inp.char_count {
 		cp := inp.chars[i]
-		if cp < 32 || cp == 127 {
+		if menu || cp < 32 || cp == 127 {
 			continue
 		}
 		ok, nc := buf.insert(cur, cp)
@@ -246,6 +247,9 @@ fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
 	for i in 0 .. inp.key_count {
 		// Otomatik tekrar yalnızca düzenleme tuşlarında (ok, Backspace, Delete, Home, End) etkili.
 		if inp.key_repeat[i] && (inp.keys[i] == .enter || inp.keys[i] == .escape) {
+			continue
+		}
+		if menu && (inp.keys[i] == .enter || inp.keys[i] == .escape) {
 			continue
 		}
 		match inp.keys[i] {
@@ -293,9 +297,9 @@ fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
 }
 
 // Metni değiştiren girdi var mı (yazılabilir karakter, Backspace, Delete).
-fn edit_hits(inp Input) bool {
+fn edit_hits(inp Input, menu bool) bool {
 	for i in 0 .. inp.char_count {
-		if inp.chars[i] >= 32 && inp.chars[i] != 127 {
+		if !menu && inp.chars[i] >= 32 && inp.chars[i] != 127 {
 			return true
 		}
 	}
@@ -376,7 +380,7 @@ pub fn (mut c Context) text_field(label string, mut buf TextBuf, width f32) bool
 	}
 	mut enter := false
 	if it.focused {
-		r, nc := edit_keys(mut buf, c.txt_cur, c.inp)
+		r, nc := edit_keys(mut buf, c.txt_cur, c.inp, c.kb_menu)
 		c.txt_cur = nc
 		enter = r.enter
 		if r.esc {
@@ -423,59 +427,134 @@ pub fn (mut c Context) text_field(label string, mut buf TextBuf, width f32) bool
 	return enter
 }
 
+// Sayı alanı olayları: bu karede ne oldu (sürükleme olayları ilgili karede, değişiklik her karede).
+pub struct NumberFieldResult {
+pub mut:
+	changed        bool // bu karede değer değişti (sürükleme her karesi ya da yazılı onay)
+	drag_started   bool // eşik aşıldığı kare
+	drag_ended     bool // sürükleme normal bitti (fare bırakıldı)
+	drag_cancelled bool // sürükleme sırasında Esc: değer sürükleme başlangıcına döndü
+	committed      bool // yazılı düzenleme Enter ya da odak kaybıyla uygulandı
+}
+
+// Sayı alanı seçenekleri. min == max == 0 sınırsız; error doluysa alan danger kenarlıkla ve altında hata satırıyla çizilir.
+pub struct NumberFieldOpts {
+pub:
+	unit     string
+	decimals int = 2
+	step     f32 = f32(0.1)
+	min      f32
+	max      f32
+	readonly bool   // odaklanmaz, sürüklenmez, düzenlenmez; metin text_muted
+	error    string // çağıranın sahip olduğu metin; kare başına tahsis yok
+}
+
 // Sayı alanı: yatay sürükleme değeri değiştirir; tıklayıp bırakma düzenleme moduna geçer.
 // Değer her zaman decimals basamakla gösterilir ("-4.00"). Etiket alanın dışında çizilir (property_row_begin).
 // Enter ayrıştırıp uygular; ayrıştırılamazsa eski değer kalır. Değer değiştiyse true.
 // Odak başka alana geçerse bekleyen düzenleme aynı kare uygulanır (commit on blur).
 pub fn (mut c Context) number_field(label string, mut value &f32, unit string, decimals int, step f32, min f32, max f32) bool {
+	return c.number_field_ex(label, mut value, NumberFieldOpts{
+		unit:     unit
+		decimals: decimals
+		step:     step
+		min:      min
+		max:      max
+	}).changed
+}
+
+// number_field'ın olay raporlu biçimi; sürükleme başlangıcı ve Esc iptali alan durumunda tutulur.
+pub fn (mut c Context) number_field_ex(label string, mut value &f32, o NumberFieldOpts) NumberFieldResult {
 	id := c.id(label)
-	mut editing := c.num_id == id
-	it := c.interact_kb(id, true, !editing, true)
+	h := c.touch(id)
+	mut r := NumberFieldResult{}
+	mut it := Interaction{}
+	if o.readonly {
+		if c.active == id {
+			c.active = 0
+		}
+		if c.num_id == id {
+			c.num_id = 0
+		}
+		if c.focus == id {
+			c.focus = 0
+			c.focus_visible = false
+		}
+	} else {
+		it = c.interact_kb(id, true, c.num_id != id, true)
+	}
+	editing := c.num_id == id
 	if c.inp.pressed[0] && it.hovered {
 		c.num_moved = false
 	}
 	cur := unsafe { *value }
 	mut v := cur
 	if it.dragging && !editing {
-		c.num_moved = true
-		mult := if c.inp.shift { f32(10) } else { f32(1) }
-		v = num_clamp(cur + it.drag_dx * step / drag_px_div * mult, min, max)
+		v = c.num_drag(h, cur, it.drag_dx, o, mut r)
+	}
+	// Sürükleme bitti (bırakıldı ya da hiç başlamadı): başlangıç ve iptal bayrakları silinir.
+	if h >= 0 && !it.dragging {
+		if c.states[h].flag(off_num_drag) {
+			c.states[h].set_flag(off_num_drag, false)
+			r.drag_ended = true
+		}
+		c.states[h].set_flag(off_num_cancel, false)
 	}
 	if it.clicked && !c.num_moved && !editing {
-		c.begin_num(id, cur, decimals)
+		c.begin_num(id, cur, o.decimals)
 	}
 	if editing {
-		if c.num_fresh && edit_hits(c.inp) {
+		if c.num_fresh && edit_hits(c.inp, c.kb_menu) {
 			c.num_buf.len = 0
 			c.num_cur = 0
 			c.num_fresh = false
 		}
-		r, nc := edit_keys(mut c.num_buf, c.num_cur, c.inp)
+		e, nc := edit_keys(mut c.num_buf, c.num_cur, c.inp, c.kb_menu)
 		c.num_cur = nc
 		// Enter, Esc ya da odak kaybı düzenlemeyi bitirir; Esc değeri değiştirmez.
-		if r.enter || !it.focused {
+		if e.enter || !it.focused {
 			if nv := parse_f32(c.num_buf.str()) {
-				v = num_clamp(nv, min, max)
+				v = num_clamp(nv, o.min, o.max)
+				r.committed = true
 			}
 			c.end_num(id)
-		} else if r.esc {
+		} else if e.esc {
 			c.end_num(id)
 		}
 	}
 	if it.clicked {
 		c.num_moved = false
 	}
-	changed := v != cur
-	if changed {
+	r.changed = v != cur
+	if r.changed {
 		unsafe {
 			*value = v
 		}
 	}
 	k := c.num_n % c.num_bufs.len
 	c.num_n++
-	n := format_f32(v, decimals, mut c.num_bufs[k])
+	n := format_f32(v, o.decimals, mut c.num_bufs[k])
+	ro := o.readonly
+	err := o.error.len > 0
 	// Özellik satırında panelin kalanını doldurur; tek başınayken sabit genişlik.
 	w := if c.in_prop { grow() } else { fixed(num_field_w) }
+	if err {
+		// Hata satırı alanın altına girer; kapsayıcının kimliği alan kimliğinden türer (etiket çakışmaz).
+		c.push_id(int(id))
+		c.open('num_err', Box{
+			dir:    .column
+			width:  grow()
+			height: fit()
+		})
+		c.pop_id()
+	}
+	edge := if err {
+		danger
+	} else if it.focused && !ro {
+		accent
+	} else {
+		border_strong
+	}
 	c.open(label, Box{
 		dir:         .row
 		width:       w
@@ -484,22 +563,49 @@ pub fn (mut c Context) number_field(label string, mut value &f32, unit string, d
 		gap:         space_2
 		align_cross: .center
 		bg:          surface_2
-		border:      if it.focused { accent } else { border_strong }
+		border:      edge
 		border_w:    1
 		radius:      radius_control
 		clip:        true
 	})
+	fg := if ro { text_muted } else { text_primary }
 	if c.num_id == id {
-		c.field_text(&c.num_buf, c.num_cur, .mono, text_primary, true)
+		c.field_text(&c.num_buf, c.num_cur, .mono, fg, true)
 	} else {
-		c.text(unsafe { tos(&c.num_bufs[k][0], n) }, .mono, text_primary)
+		c.text(unsafe { tos(&c.num_bufs[k][0], n) }, .mono, fg)
 	}
 	c.spacer()
-	if unit.len > 0 {
-		c.text(unit, .body, text_secondary)
+	if o.unit.len > 0 {
+		c.text(o.unit, .body, if ro { text_muted } else { text_secondary })
 	}
 	c.close()
-	return changed
+	if err {
+		c.text(o.error, .caption, danger)
+		c.close()
+	}
+	return r
+}
+
+// Sürükleme adımı: eşik karesinde başlangıç değeri alan durumuna yazılır; Esc başlangıca döndürür ve iptal bayrağını kurar.
+// Esc sonrası basılı tutuluyorsa değer değişmez (bırakılana dek sürükleme yok).
+fn (mut c Context) num_drag(h int, cur f32, dx f32, o NumberFieldOpts, mut r NumberFieldResult) f32 {
+	c.num_moved = true
+	if h >= 0 && c.states[h].flag(off_num_cancel) {
+		return cur
+	}
+	if h >= 0 && !c.states[h].flag(off_num_drag) {
+		c.states[h].set_flag(off_num_drag, true)
+		c.states[h].set_f32(off_num_v0, cur)
+		r.drag_started = true
+	}
+	if h >= 0 && c.key_pressed(.escape) {
+		c.states[h].set_flag(off_num_drag, false)
+		c.states[h].set_flag(off_num_cancel, true)
+		r.drag_cancelled = true
+		return c.states[h].f32_at(off_num_v0)
+	}
+	mult := if c.inp.shift { f32(10) } else { f32(1) }
+	return num_clamp(cur + dx * o.step / drag_px_div * mult, o.min, o.max)
 }
 
 // Rengin opaklığını a (0..1) ile çarpar; menü açılışı için.
@@ -526,13 +632,22 @@ pub fn (mut c Context) menu_button_ex(label string, text string, width Size, lea
 	menu_r := c.prev_rect(mid) or { Rect{} }
 	if it.clicked {
 		open = !open
-	} else if open && (c.key_pressed(.escape) || (c.inp.pressed[0] && !it.hovered && !menu_r.contains(c.inp.mouse_x, c.inp.mouse_y))) {
+		if h >= 0 {
+			// Klavyeyle açılan menü ilk öğeyi vurgular; fareyle açılan hiçbirini.
+			c.states[h].data[off_menu_hl] = if open && c.focus_visible { u8(0) } else { menu_none }
+		}
+	} else if open && (c.raw_key(.escape) || (c.inp.pressed[0] && !it.hovered && !menu_r.contains(c.inp.mouse_x, c.inp.mouse_y))) {
 		open = false
 	}
 	if h >= 0 {
 		c.states[h].set_flag(off_open, open)
+		if open {
+			c.menu_nav(h)
+			c.kb_menu_next = true
+		}
 	}
 	c.menu_cur = id
+	c.menu_idx = 0
 	t := c.hover_t(mid, open)
 	c.menu_alpha = t
 	bt := c.hover_t(id, it.hovered)
@@ -576,11 +691,35 @@ pub fn (mut c Context) menu_button_ex(label string, text string, width Size, lea
 // Yukarıdan kayma (px); menü açılışında 0'a iner.
 const menu_slide = space_1
 
-// Menü öğesi: tıklanınca true ve menü kapanır.
+// Açık menüde ok tuşları vurguyu taşır (sarmalı). Öğe sayısı önceki karenin sayısıdır; ilk karede yoktur.
+fn (mut c Context) menu_nav(h int) {
+	n := int(c.states[h].data[off_menu_n])
+	if n == 0 {
+		return
+	}
+	cur := int(c.states[h].data[off_menu_hl])
+	if c.raw_key(.down) {
+		next := if cur >= n - 1 { 0 } else { cur + 1 }
+		c.states[h].data[off_menu_hl] = u8(next)
+	} else if c.raw_key(.up) {
+		next := if cur <= 0 || cur >= n { n - 1 } else { cur - 1 }
+		c.states[h].data[off_menu_hl] = u8(next)
+	}
+}
+
+// Menü öğesi: fare tıklaması ya da vurgulu öğede Enter ile true ve menü kapanır.
 pub fn (mut c Context) menu_item(text string) bool {
 	c.push_id(2)
 	iid := c.id(text)
 	it := c.interact(iid, true)
+	idx := c.menu_idx
+	c.menu_idx++
+	th := c.touch(c.menu_cur)
+	mut kb := false
+	if th >= 0 {
+		kb = int(c.states[th].data[off_menu_hl]) == idx
+		c.states[th].data[off_menu_n] = u8(c.menu_idx)
+	}
 	t := c.hover_t(iid, it.hovered)
 	c.open(text, Box{
 		dir:         .row
@@ -588,19 +727,21 @@ pub fn (mut c Context) menu_item(text string) bool {
 		height:      fixed(row_h)
 		padding:     pad_xy(space_2, 0)
 		align_cross: .center
-		bg:          fade(mix(surface_hover.with_alpha(0), surface_hover, t), c.menu_alpha)
+		bg:          fade(if kb { surface_hover } else { mix(surface_hover.with_alpha(0), surface_hover, t) }, c.menu_alpha)
 		radius:      radius_control
 	})
 	c.pop_id()
 	c.text(text, .body, fade(text_primary, c.menu_alpha))
 	c.close()
-	if it.clicked {
-		h := c.touch(c.menu_cur)
-		if h >= 0 {
-			c.states[h].set_flag(off_open, false)
+	chosen := it.clicked || (kb && c.kb_menu && c.raw_key(.enter))
+	if chosen {
+		if th >= 0 {
+			c.states[th].set_flag(off_open, false)
 		}
+		// Menü bu karede kapandı: sonraki kare klavyeyi geri almaz.
+		c.kb_menu_next = false
 	}
-	return it.clicked
+	return chosen
 }
 
 pub fn (mut c Context) menu_end() {

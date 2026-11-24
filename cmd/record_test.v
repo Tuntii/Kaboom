@@ -21,7 +21,7 @@ fn write_valid_recording(path string) {
 	defer {
 		memory.release(region)
 	}
-	rec.start()
+	rec.start([]u8{}, 0)
 	rec.append(1, Command{ kind: .spawn, source: .agent })
 	rec.append(2, Command{ kind: .set_field, source: .editor, entity: 5, comp: 1, field: 2, value: 99 })
 	rec.save(path, 100, 42) or { panic(err) }
@@ -58,7 +58,7 @@ fn test_append_inactive_is_noop() {
 	rec.append(1, Command{ kind: .spawn, source: .agent })
 	assert rec.len() == 0
 	assert !rec.is_active()
-	rec.start()
+	rec.start([]u8{}, 0)
 	rec.append(1, Command{ kind: .spawn, source: .agent })
 	rec.stop()
 	rec.append(2, Command{ kind: .spawn, source: .agent })
@@ -70,7 +70,7 @@ fn test_save_load_roundtrip() {
 	defer {
 		memory.release(region)
 	}
-	rec.start()
+	rec.start([]u8{}, 0)
 	rec.append(1, Command{ kind: .set_field, source: .agent, entity: 5, comp: 0, field: 1, value: 77 })
 	rec.append(2, Command{ kind: .spawn, source: .agent, entity: 6 })
 	rec.append(2, Command{ kind: .despawn, source: .editor, entity: 6 })
@@ -103,7 +103,7 @@ fn test_load_rejects_bad_files() {
 	assert load_fails(path)
 
 	write_valid_recording(path)
-	patch_byte(path, 4, 2) // yanlış sürüm
+	patch_byte(path, 4, 3) // yanlış sürüm
 	assert load_fails(path)
 
 	write_valid_recording(path)
@@ -123,7 +123,7 @@ fn test_load_rejects_bad_kind_with_index() {
 		os.rm(path) or {}
 	}
 	write_valid_recording(path)
-	patch_entry_byte(path, 32 + 32 + 8, 5) // entry 1, cmd.kind = 5 (geçersiz)
+	patch_entry_byte(path, 48 + 32 + 8, 5) // entry 1, cmd.kind = 5 (geçersiz)
 	load_recording(path) or {
 		assert err.msg().contains('kayit 1')
 		return
@@ -137,7 +137,7 @@ fn test_load_rejects_bad_source_with_index() {
 		os.rm(path) or {}
 	}
 	write_valid_recording(path)
-	patch_entry_byte(path, 32 + 0 + 9, 3) // entry 0, cmd.source = 3 (geçersiz)
+	patch_entry_byte(path, 48 + 0 + 9, 3) // entry 0, cmd.source = 3 (geçersiz)
 	load_recording(path) or {
 		assert err.msg().contains('kayit 0')
 		return
@@ -151,7 +151,7 @@ fn test_load_rejects_nonzero_pad_with_index() {
 		os.rm(path) or {}
 	}
 	write_valid_recording(path)
-	patch_entry_byte(path, 32 + 32 + 14, 1) // entry 1, cmd.pad != 0
+	patch_entry_byte(path, 48 + 32 + 14, 1) // entry 1, cmd.pad != 0
 	load_recording(path) or {
 		assert err.msg().contains('kayit 1')
 		return
@@ -164,7 +164,7 @@ fn test_overflow_blocks_save() {
 	defer {
 		memory.release(region)
 	}
-	rec.start()
+	rec.start([]u8{}, 0)
 	rec.append(1, Command{ kind: .spawn, source: .agent })
 	rec.append(2, Command{ kind: .spawn, source: .agent })
 	assert rec.overflowed()
@@ -186,7 +186,7 @@ fn test_load_rejects_checksum_mismatch() {
 		os.rm(path) or {}
 	}
 	write_valid_recording(path)
-	patch_byte(path, 32 + 5, 0x7F) // gövde baytı değişti, checksum yeniden mühürlenmedi
+	patch_byte(path, 48 + 5, 0x7F) // gövde baytı değişti, checksum yeniden mühürlenmedi
 	load_recording(path) or {
 		assert err.msg().contains('checksum mismatch')
 		return
@@ -199,7 +199,7 @@ fn test_load_rejects_script_source_with_index() {
 	defer {
 		memory.release(region)
 	}
-	rec.start()
+	rec.start([]u8{}, 0)
 	rec.append(1, Command{ kind: .spawn, source: .agent })
 	rec.append(2, Command{ kind: .spawn, source: .script })
 	path := temp_record_path('script_source')
@@ -220,7 +220,7 @@ fn test_load_rejects_non_monotonic_ticks_with_index() {
 	defer {
 		memory.release(region)
 	}
-	rec.start()
+	rec.start([]u8{}, 0)
 	rec.append(5, Command{ kind: .spawn, source: .agent })
 	rec.append(3, Command{ kind: .spawn, source: .agent })
 	path := temp_record_path('non_monotonic')
@@ -240,7 +240,7 @@ fn test_load_rejects_end_tick_before_last_entry() {
 	defer {
 		memory.release(region)
 	}
-	rec.start()
+	rec.start([]u8{}, 0)
 	rec.append(5, Command{ kind: .spawn, source: .agent })
 	path := temp_record_path('end_tick')
 	defer {
@@ -248,4 +248,71 @@ fn test_load_rejects_end_tick_before_last_entry() {
 	}
 	rec.save(path, 100, 4) or { panic(err) }
 	assert load_fails(path)
+}
+
+// Sürüm 2: dünya görüntüsü ve başlangıç tick'i dosyadan aynen geri okunur.
+fn test_save_load_v2_keeps_snapshot_and_start_tick() {
+	region, mut rec := recorder_env(4)
+	defer {
+		memory.release(region)
+	}
+	snap := [u8(1), 2, 3, 4, 5]
+	rec.start(snap, 7)
+	rec.append(8, Command{ kind: .spawn, source: .agent })
+	path := temp_record_path('v2_roundtrip')
+	defer {
+		os.rm(path) or {}
+	}
+	rec.save(path, 100, 9) or { panic(err) }
+	got := load_recording(path) or { panic(err) }
+	assert got.start_tick == 7
+	assert got.end_tick == 9
+	assert got.snapshot == snap
+	assert got.entries.len == 1 && got.entries[0].tick == 8
+}
+
+// Sürüm 1 dosyası (başlıkta 1, gövde yalnız girdiler) hâlâ okunur: boş dünya, tick 0.
+fn test_load_version1_file_has_empty_start() {
+	path := temp_record_path('v1_file')
+	defer {
+		os.rm(path) or {}
+	}
+	mut buf := []u8{len: 64}
+	put_u32(mut buf, 0, record_magic)
+	put_u32(mut buf, 4, record_version_1)
+	put_u32(mut buf, 8, 100)
+	put_u64(mut buf, 16, 42)
+	put_u64(mut buf, 24, 1)
+	e := RecordEntry{
+		tick: 3
+		cmd:  Command{ kind: .spawn, source: .agent }
+	}
+	unsafe { vmemcpy(&buf[32], &e, 32) }
+	put_u32(mut buf, 12, record_checksum(buf[32..]))
+	os.write_file_array(path, buf) or { panic(err) }
+	got := load_recording(path) or { panic(err) }
+	assert got.start_tick == 0
+	assert got.snapshot.len == 0
+	assert got.end_tick == 42
+	assert got.entries.len == 1 && got.entries[0].tick == 3
+}
+
+// Sürüm 2'de girdi, başlangıç tick'inden önce olamaz.
+fn test_load_rejects_entry_before_start_tick() {
+	region, mut rec := recorder_env(4)
+	defer {
+		memory.release(region)
+	}
+	rec.start([u8(1), 2, 3, 4], 10)
+	rec.append(5, Command{ kind: .spawn, source: .agent })
+	path := temp_record_path('before_start')
+	defer {
+		os.rm(path) or {}
+	}
+	rec.save(path, 100, 20) or { panic(err) }
+	load_recording(path) or {
+		assert err.msg().contains('kayit 0')
+		return
+	}
+	assert false
 }

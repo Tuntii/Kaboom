@@ -408,3 +408,31 @@ fn test_hairlines_and_borders_integer_thickness() {
 		assert seps == 4
 	}
 }
+
+// Kırpma dışındaki satırların alt ağaçlarına inilmez: görünür satırlar kadar ziyaret, çıktı değişmez.
+fn test_paint_skips_offclip_subtrees() {
+	mut atl := layout_atlas(1.0)
+	mut c := Context.new(&atl, 4096, 8192) or { panic(err) }
+	c.begin(Input{}, 300, 300, 1.0)
+	c.open('list', Box{
+		dir:    .column
+		width:  fixed(100)
+		height: fixed(100)
+		clip:   true
+	})
+	for k in 0 .. 1000 {
+		c.push_id(k)
+		c.open('row', Box{
+			width:  grow()
+			height: fixed(row_h)
+		})
+		c.text('x', .body, text_primary)
+		c.close()
+		c.pop_id()
+	}
+	c.close()
+	l := c.end()
+	// 100 px kutuda 4 satır (kısmen görünen dahil) ve kutu: ziyaret sayısı satır mertebesinde.
+	assert c.paint_visits() <= 12, 'ziyaret: ${c.paint_visits()}'
+	assert l.len() == 4, 'komut: ${l.len()}'
+}

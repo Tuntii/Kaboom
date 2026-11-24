@@ -462,3 +462,100 @@ fn test_block_inverse_is_single_block() {
 	assert b[0].value == hist_bits(5)
 	assert b[1].value == hist_bits(1)
 }
+
+fn field_cmd(e ecs.EntityID, field u16, v f32, src Source) Command {
+	return Command{
+		kind:   .set_field
+		source: src
+		comp:   ecs.transform_id
+		field:  field
+		entity: e
+		value:  hist_bits(v)
+	}
+}
+
+// Ajan isteği açık editör grubunun içindeyken kendi grubunu kurar: editör kapanınca yığında üstte editör, altta ajan.
+fn test_agent_group_separate_during_editor_group() {
+	region, mut w, mut h := hist_env(16, 8)
+	defer {
+		memory.release(region)
+	}
+	e := w.spawn() or { panic('spawn') }
+	assert w.add_component(e, ecs.transform_id) == .ok
+	h.begin_group()
+	assert hist_step(mut h, mut w, field_cmd(e, 0, 4.0, .editor)).status == .ok
+	h.begin_request(true)
+	assert hist_step(mut h, mut w, field_cmd(e, 1, 9.0, .agent)).status == .ok
+	h.end_request()
+	// Ajan grubu hemen yığında; editör grubu hâlâ hazırlama alanında.
+	assert h.undo_len() == 1
+	assert h.staged().block_count() == 1
+	h.end_group()
+	assert h.undo_len() == 2
+	top := h.pop_undo() or { panic('pop top') }
+	assert top.block(0)[0].field == 0
+	bottom := h.pop_undo() or { panic('pop bottom') }
+	assert bottom.block(0)[0].field == 1
+}
+
+// İstek grubunun taşması yalnız kendi hazırlama alanını düşürür; editör grubu sağlam kalır.
+fn test_request_overflow_does_not_touch_editor_group() {
+	region, mut w, mut h := hist_env(4, 8)
+	defer {
+		memory.release(region)
+	}
+	e := w.spawn() or { panic('spawn') }
+	assert w.add_component(e, ecs.transform_id) == .ok
+	h.begin_group()
+	assert hist_step(mut h, mut w, field_cmd(e, 0, 1.0, .editor)).status == .ok
+	h.begin_request(true)
+	for i in 0 .. 5 {
+		assert hist_step(mut h, mut w, field_cmd(e, 1, f32(i + 1), .agent)).status == .ok
+	}
+	h.end_request()
+	assert h.dropped_groups() == 1
+	assert h.undo_len() == 0
+	assert !h.stage_overflowed()
+	assert h.staged().block_count() == 1
+	h.end_group()
+	assert h.undo_len() == 1
+}
+
+// Editör grubu yokken istek grubu düz bir gruptur (eski davranış): ajan adımı yığına girer, hazırlama boşalır.
+fn test_request_group_without_editor_is_plain_group() {
+	region, mut w, mut h := hist_env(16, 8)
+	defer {
+		memory.release(region)
+	}
+	e := w.spawn() or { panic('spawn') }
+	assert w.add_component(e, ecs.transform_id) == .ok
+	h.begin_request(true)
+	assert hist_step(mut h, mut w, field_cmd(e, 0, 3.0, .agent)).status == .ok
+	assert h.staged().block_count() == 1
+	h.end_request()
+	assert h.undo_len() == 1
+	assert h.staged().block_count() == 0
+}
+
+// Tick yolunda istek grubu tahsis yapmaz (track_heap ile koşar; yoksa atlanır).
+fn test_request_group_capture_does_not_allocate() {
+	if !memory.heap_tracking_enabled() {
+		return
+	}
+	region, mut w, mut h := hist_env(16, 8)
+	defer {
+		memory.release(region)
+	}
+	e := w.spawn() or { panic('spawn') }
+	assert w.add_component(e, ecs.transform_id) == .ok
+	h.begin_group()
+	assert hist_step(mut h, mut w, field_cmd(e, 0, 1.0, .editor)).status == .ok
+	before := memory.heap_alloc_count()
+	for i in 0 .. 100 {
+		h.begin_request(true)
+		_ = hist_step(mut h, mut w, field_cmd(e, 1, f32(i), .agent))
+		h.end_request()
+	}
+	assert memory.heap_alloc_count() == before
+	h.end_group()
+}

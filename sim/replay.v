@@ -11,10 +11,10 @@ pub:
 	hash     u64
 }
 
-// Kaydı taze bir Sim'de yeniden oynatır. Girdiler kayıt sırasıyla doğrudan uygulanır; kuyruk kullanılmaz.
+// Kaydı taze bir Sim'de yeniden oynatır: önce dünya görüntüsü (sürüm 1'de boş dünya), sonra tick ve girdiler doğrudan uygulanır.
 pub fn replay(rec cmd.Recording, reg &ecs.Registry) !ReplayResult {
 	// Doğrulama tahsis gerektirmez; bozuk kayıt bölge ayrılmadan reddedilir.
-	mut prev := u64(0)
+	mut prev := rec.start_tick
 	for e in rec.entries {
 		if e.tick < prev {
 			return error('replay ayrıştı: tick ${e.tick}: kayıt sırası monoton değil (önceki tick ${prev})')
@@ -37,6 +37,10 @@ pub fn replay(rec cmd.Recording, reg &ecs.Registry) !ReplayResult {
 	defer { memory.release(region) }
 	mut a := memory.LinearArena.new(region, need)
 	mut s := Sim.new(mut a, reg, cfg) or { return error('replay setup failed: Sim could not be created') }
+	if rec.snapshot.len > 0 {
+		s.world.restore(rec.snapshot) or { return error('replay snapshot rejected: ${err.msg()}') }
+	}
+	s.set_tick(rec.start_tick)
 
 	// Ayrışma "replay diverged: " önekiyle döner; protokol bu öneki 1011 olarak eşler.
 	for i, e in rec.entries {

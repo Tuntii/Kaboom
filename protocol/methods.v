@@ -34,7 +34,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'entity.spawn'
 		params: '{"components"?: {"<Comp>": {"<field>": number}}}'
-		result: '{"entity": id}'
+		result: '{"entity": id}; id değerleri yalnız mevcut dünya için geçerlidir; scene.load/sim.reset sonrası eski id değerleri geçersizdir ve başka bir varlığa denk gelebilir'
 	},
 	CommandDoc{
 		method: 'entity.despawn'
@@ -84,7 +84,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'sim.reset'
 		params: 'none'
-		result: '{}; dünyayı, kuyruğu, kaydı ve geçmişi sıfırlar'
+		result: '{}; dünyayı, kuyruğu, kaydı ve geçmişi sıfırlar; id değerleri yalnız mevcut dünya için geçerlidir, sıfırlamadan sonra eski id değerleri geçersizdir ve başka bir varlığa denk gelebilir; aktif kayıt varken 1008'
 	},
 	CommandDoc{
 		method: 'sim.state_hash'
@@ -109,7 +109,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'history.undo'
 		params: 'none'
-		result: '{"applied": bool, "commands": n, "failed": n, "remap": [{"old": id, "new": id}]}; uygulanmadıysa applied false ve "reason": "empty" (boş yığın, hata değil) ya da "editor_group_open" (açık editör grubu içinde reddedilir); yalnız reddedilince neden alanı döner'
+		result: '{"applied": bool, "commands": n, "failed": n, "remap": [{"old": id, "new": id}]}; uygulanmadıysa applied false ve "reason": "empty" (boş yığın, hata değil) ya da "editor_group_open" (açık editör grubu içinde reddedilir); yalnız reddedilince neden alanı döner. Açık editör grubu iptali (D1) yalnız editör yazımlarını geri alır; ajan istekleri kendi geri alma adımlarıdır. Aynı alanı iki kaynak değiştirdiyse iptal editörün başlangıç değerini yazar, ajanın adımı yığında kalır; geri alma sırası grupların kapanma sırasını izler, bu yüzden aynı alanda ajan adımının geri alınması editörün ara değerini yazabilir'
 	},
 	CommandDoc{
 		method: 'history.redo'
@@ -119,7 +119,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'record.start'
 		params: 'none'
-		result: '{}; yalnizca tick 0 ve bos dünyada'
+		result: '{}; her dünyada çalışır: o anki dünyanın birebir görüntüsü ve tick kayda yazılır; aktif kayıt varken scene.load ve sim.reset reddedilir'
 	},
 	CommandDoc{
 		method: 'record.stop'
@@ -129,7 +129,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'replay.run'
 		params: '{"path": string}'
-		result: '{"end_tick", "hash"}'
+		result: '{"end_tick", "hash"}; kayıt görüntüsü şema uyumunu alan sayısı ve boyutlarıyla denetler, alan adlarıyla değil; uyuşmazlık io_error (1010)'
 	},
 	CommandDoc{
 		method: 'scene.save'
@@ -139,7 +139,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'scene.load'
 		params: '{"path": string}'
-		result: '{"entities": [id, ...]}; dosya tamamen doğrulanır, sonra dünya sıfırlanıp kurulur ve geçmiş temizlenir; hatalar: -32602 (biçim, aralık, sonlu olmayan sayı; varlık ve alan hatalarında data: entity_index, component, field), -32603 (bellek), 1002 bilinmeyen bileşen, 1003 bilinmeyen alan, 1006 kapasite, 1007 kuyruk dolu, 1008 kayıt aktif, 1009 readonly alan, 1010 io_error; doğrulama hataları dünyayı değiştirmez'
+		result: '{"entities": [id, ...]}; dosya tamamen doğrulanır, sonra dünya sıfırlanıp kurulur ve geçmiş temizlenir; id değerleri yalnız mevcut dünya için geçerlidir, scene.load sonrası eski id değerleri geçersizdir ve başka bir varlığa denk gelebilir; hatalar: -32602 (biçim, aralık, sonlu olmayan sayı; varlık ve alan hatalarında data: entity_index, component, field), -32603 (bellek), 1002 bilinmeyen bileşen, 1003 bilinmeyen alan, 1006 kapasite, 1007 kuyruk dolu, 1008 kayıt aktif, 1009 readonly alan, 1010 io_error; doğrulama hataları dünyayı değiştirmez'
 	},
 ]
 
@@ -470,6 +470,10 @@ fn (mut s Server) sim_step(p Val) !Val {
 
 // Bölgeyi serbest birakip tazesini ayırır. Yeniden ayırma başarısızsa sunucu kapalı kalır.
 fn (mut s Server) sim_reset() !Val {
+	// Kayıt, dünya görüntüsüyle başladığı için ortasında dünya değişemez.
+	if s.engine.recorder.is_active() {
+		return record_error('a recording is active; call record.stop before sim.reset')
+	}
 	s.engine.free()
 	_ = memory.release(s.region)
 	s.region = unsafe { nil }
@@ -524,10 +528,7 @@ fn (mut s Server) record_start() !Val {
 	if s.engine.recorder.is_active() {
 		return record_error('a recording is already active; call record.stop first')
 	}
-	if s.engine.tick() != 0 || s.engine.world.entities().high_water() != 0 {
-		return record_error('recording starts only on a pristine world (tick 0, no entities); call sim.pause, then sim.reset, then record.start')
-	}
-	s.engine.recorder.start()
+	s.engine.start_recording()
 	return empty_object()
 }
 
@@ -566,6 +567,10 @@ fn (s &Server) replay_run(p Val) !Val {
 	res := sim.replay(rec, &s.reg) or {
 		msg := err.msg()
 		// Yalnızca "replay diverged: " önekli hatalar kaydın ayrıştığını gösterir; diğerleri sunucu içi hatadır.
+		// Görüntü geri yüklenemedi: başka derlemeden ya da bozuk kayıt; yeniden kaydedilmeli (1010).
+		if msg.starts_with('replay snapshot rejected: ') {
+			return io_error(path, 'recording from an incompatible build or corrupted; record it again with record.start and record.stop')
+		}
 		if msg.starts_with('replay diverged: ') {
 			d := obj()
 			d.set('path', str_val(path))

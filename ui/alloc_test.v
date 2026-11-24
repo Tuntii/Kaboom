@@ -150,3 +150,125 @@ fn test_showcase_editor_interactions_zero_alloc() {
 	assert run.editing, 'x alani duzenlemeye gecmedi'
 	assert run.tip, 'Oynat ipucu gosterilmedi'
 }
+// Hata satırı yolu: alan explicit error metniyle çizilir; boşta bu karelerde 0 tahsis ve tam bir ipucu düğümü.
+const alloc_r_err = 'Sprite.r must be in [0, 1]'
+
+fn number_error_page(mut c Context, mut st ShowcaseState) {
+	c.property_row_begin('r')
+	c.number_field_ex('r', mut &st.r, NumberFieldOpts{
+		decimals: 2
+		step:     f32(0.01)
+		min:      0
+		max:      1
+		error:    alloc_r_err
+	})
+	c.property_row_end()
+}
+
+fn test_number_field_error_zero_alloc() {
+	if !memory.heap_tracking_enabled() {
+		eprintln('atlandi: -d track_heap ile calistir')
+		return
+	}
+	atlas := Atlas.build(1.0) or { panic(err) }
+	mut c := Context.new(&atlas, 4096, 8192) or { panic(err) }
+	mut st := ShowcaseState.new()
+	st.r = 2
+	for k in 0 .. 5 {
+		c.begin(Input{ time_ms: f64(k) * 16 }, 1440, 900, 1.0)
+		number_error_page(mut c, mut st)
+		c.end()
+	}
+	before := memory.heap_alloc_count()
+	for k in 5 .. 65 {
+		c.begin(Input{ time_ms: f64(k) * 16 }, 1440, 900, 1.0)
+		number_error_page(mut c, mut st)
+		c.end()
+	}
+	assert memory.heap_alloc_count() - before == 0
+	mut hints := 0
+	for i in 0 .. c.n {
+		if c.nodes[i].kind == .text && c.nodes[i].text == alloc_r_err {
+			hints++
+		}
+	}
+	assert hints == 1, 'hata satiri sayisi: ${hints}'
+}
+
+struct VlRun {
+mut:
+	menu_open bool
+}
+
+// Sanal liste, metin kısaltma, bölüm ve klavyeyle gezilen menü: kararlı durumda 0 tahsis.
+fn vl_page(mut c Context, mut run VlRun) {
+	r := c.section_ex('vl_sec', 'Satırlar', SectionOpts{
+		trailing_icon: Icon.trash
+		trailing_tip:  'Çıkar'
+	})
+	if r.open {
+		vl := c.virtual_list_begin('vl_list', 10000, row_h, Box{
+			dir:    .column
+			width:  fixed(200)
+			height: fixed(200)
+		})
+		for k in vl.first .. vl.first + vl.count {
+			c.push_id(k)
+			c.list_row('vl_row', 'Kaydedilmemiş değişiklikler', k == 3)
+			c.pop_id()
+		}
+		c.virtual_list_end()
+	}
+	c.text_trunc('Kaydedilmemiş değişiklikler', .body, text_primary, 80)
+	if c.menu_button('vl_menu', 'Menü') {
+		c.menu_item('Bir')
+		c.menu_item('İki')
+		c.menu_item('Üç')
+		c.menu_end()
+	}
+	run.menu_open = editor_menu_open(&c, 'vl_menu')
+}
+
+// Kare 0: konum bilinmez. Kare 1: fare tetikleyiciye (önceki karenin konumu), 2: basış, 3: bırakma (menü açılır).
+// Sonra çift karelerde Aşağı ok (menü açık kalır, vurgu gezer).
+fn vl_script_input(c &Context, k int) Input {
+	mut inp := Input{
+		time_ms: f64(k) * 16
+	}
+	if k >= 1 && k <= 3 {
+		r := c.last_rect('vl_menu') or { Rect{} }
+		inp.mouse_x = r.x + r.w / 2
+		inp.mouse_y = r.y + r.h / 2
+		inp.pressed[0] = k == 2
+		inp.down[0] = k == 2
+		inp.released[0] = k == 3
+	} else if k >= 4 && k % 2 == 0 {
+		inp.keys[0] = .down
+		inp.key_count = 1
+	}
+	return inp
+}
+
+fn test_virtual_list_text_trunc_menu_zero_alloc() {
+	if !memory.heap_tracking_enabled() {
+		eprintln('atlandi: -d track_heap ile calistir')
+		return
+	}
+	atlas := Atlas.build(1.0) or { panic(err) }
+	mut c := Context.new(&atlas, 4096, 8192) or { panic(err) }
+	mut run := VlRun{}
+	for k in 0 .. 20 {
+		c.begin(vl_script_input(&c, k), 1440, 900, 1.0)
+		vl_page(mut c, mut run)
+		c.end()
+	}
+	before := memory.heap_alloc_count()
+	for k in 20 .. 120 {
+		c.begin(vl_script_input(&c, k), 1440, 900, 1.0)
+		vl_page(mut c, mut run)
+		c.end()
+	}
+	assert memory.heap_alloc_count() - before == 0
+	assert run.menu_open, 'menu acik kalmadi'
+	assert c.node_overflow() == 0
+}

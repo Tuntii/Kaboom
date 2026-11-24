@@ -75,7 +75,7 @@ fn test_flush_records_ok_only_with_spawn_id() {
 	defer {
 		memory.release(region)
 	}
-	rec.start()
+	rec.start([]u8{}, 0)
 	q.push(Command{ kind: .spawn, source: .agent })
 	q.push(Command{ kind: .despawn, source: .agent, entity: ecs.make_entity(99, 0) }) // dead_entity
 	assert q.flush(mut w, 7, mut rec, mut hist) == 1
@@ -126,7 +126,7 @@ fn test_flush_records_only_external_sources_in_applied_order() {
 	}
 	e := w.spawn() or { panic('spawn') }
 	assert w.add_component(e, ecs.transform_id) == .ok
-	rec.start()
+	rec.start([]u8{}, 0)
 	q.push(Command{ kind: .set_field, source: .agent, entity: e, comp: 0, field: 0, value: bits(1.0) })
 	q.push(Command{ kind: .set_field, source: .script, entity: e, comp: 0, field: 0, value: bits(2.0) })
 	q.push(Command{ kind: .set_field, source: .editor, entity: e, comp: 0, field: 0, value: bits(3.0) })
