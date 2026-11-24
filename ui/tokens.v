@@ -13,6 +13,26 @@ pub fn (c Color) with_alpha(a u8) Color {
 	return Color((u32(c) & 0xFFFFFF00) | u32(a))
 }
 
+// Dört kanal doğrusal karışım; t 0..1 aralığına kıskaçlı.
+pub fn mix(a Color, b Color, t f32) Color {
+	k := if t < 0 {
+		f32(0)
+	} else if t > 1 {
+		f32(1)
+	} else {
+		t
+	}
+	r := mix_channel((u32(a) >> 24) & 0xFF, (u32(b) >> 24) & 0xFF, k)
+	g := mix_channel((u32(a) >> 16) & 0xFF, (u32(b) >> 16) & 0xFF, k)
+	bl := mix_channel((u32(a) >> 8) & 0xFF, (u32(b) >> 8) & 0xFF, k)
+	al := mix_channel(u32(a) & 0xFF, u32(b) & 0xFF, k)
+	return Color((r << 24) | (g << 16) | (bl << 8) | al)
+}
+
+fn mix_channel(a u32, b u32, k f32) u32 {
+	return u32(math.round(f64(f32(a) + (f32(b) - f32(a)) * k)))
+}
+
 // WCAG 2.x göreli parlaklık; alfa yok sayılır.
 fn luminance(c Color) f64 {
 	lin := fn (v f64) f64 {
@@ -73,6 +93,7 @@ pub const row_h = f32(26)
 pub const toolbar_h = f32(40)
 pub const statusbar_h = f32(24)
 pub const icon_size = f32(16)
+pub const splitter_w = f32(4)
 
 pub enum FontFace {
 	sans

@@ -396,11 +396,29 @@ fn (mut c Context) paint(i int, clip Rect) {
 		return
 	}
 	b := c.nodes[i].box
-	child_clip := if b.clip { clip.intersect(r) } else { clip }
+	// Kaydırma kutusu çocuklarını her zaman kırpar.
+	child_clip := if b.clip || b.scroll_y { clip.intersect(r) } else { clip }
 	vis := clip.intersect(r)
 	if vis.w > 0 && vis.h > 0 {
+		id := c.nodes[i].id
+		// Çizim sırası: sonra çizilen üstte; imleç altındaki son kimlik etkileşim için.
+		if id != 0 && vis.contains(c.inp.mouse_x, c.inp.mouse_y) {
+			c.hit_cur = id
+		}
 		if (u32(b.bg) & 0xFF) != 0 || (b.border_w > 0 && (u32(b.border) & 0xFF) != 0) {
 			c.emit_rect(r, clip, b)
+		}
+		if id != 0 && id == c.focus {
+			c.emit_rect(Rect{
+				x: r.x - 1
+				y: r.y - 1
+				w: r.w + 2
+				h: r.h + 2
+			}, clip, Box{
+				border:   accent
+				border_w: 1
+				radius:   radius_control + 2
+			})
 		}
 		match c.nodes[i].kind {
 			.text { c.emit_text(i, clip) }
