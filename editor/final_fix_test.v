@@ -211,7 +211,7 @@ fn test_successful_request_keeps_unrelated_note() {
 	mut e := Editor.new('')
 	ff_idle(mut c, mut e, mut srv)
 	e.set_note('ilgisiz bildirim')
-	e.step(mut srv)
+	e.spawn_at_camera(mut srv)
 	assert e.note_text() == 'ilgisiz bildirim', 'basarili istek bildirimi silmemeli: ${e.note_text()}'
 }
 
