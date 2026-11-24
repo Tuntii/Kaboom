@@ -59,7 +59,6 @@ fn C.GetModuleHandleW(name voidptr) voidptr
 fn C.RegisterClassExW(wc &C.WNDCLASSEXW) u16
 fn C.DefWindowProcW(hwnd voidptr, msg u32, wp usize, lp isize) isize
 fn C.CreateWindowExW(ex u32, cls &u16, title &u16, style u32, x int, y int, w int, h int, parent voidptr, menu voidptr, inst voidptr, param voidptr) voidptr
-fn C.AdjustWindowRect(rect &int, style u32, menu int) int
 fn C.ShowWindow(hwnd voidptr, cmd int) int
 fn C.DestroyWindow(hwnd voidptr) int
 fn C.GetClientRect(hwnd voidptr, rect &int) int
@@ -79,8 +78,46 @@ fn C.glGetString(name u32) &u8
 fn C.vcore_win_reset()
 fn C.vcore_win_mark_closed()
 fn C.vcore_win_closed() int
+fn C.vcore_in_ptr() &C.VcoreInput
+fn C.vcore_pending_get() u16
+fn C.vcore_pending_set(v u16)
+fn C.vcore_dpi_get() int
+fn C.vcore_dpi_set(d int)
+fn C.vcore_cursor_set(idc int)
+fn C.vcore_cursor_load() voidptr
+fn C.vcore_set_dpi_aware()
+fn C.vcore_system_dpi() int
+fn C.vcore_dpi_for_window(hwnd voidptr) int
+fn C.vcore_adjust_rect(rect &int, style u32, dpi int)
+fn C.vcore_on_dpi_changed(hwnd voidptr, wp usize, lp isize)
+fn C.SetCapture(hwnd voidptr) voidptr
+fn C.ReleaseCapture() int
+fn C.GetKeyState(vk int) i16
+fn C.SetCursor(c voidptr) voidptr
+
+// win_state.h'deki VcoreInput ile aynı düzen; alanlar yalnızca bu dosyada okunur/yazılır.
+@[typedef]
+struct C.VcoreInput {
+mut:
+	mouse_x    int
+	mouse_y    int
+	down       [3]int
+	pressed    [3]int
+	released   [3]int
+	wheel      f32
+	vkeys      [16]u16
+	vkey_count int
+	chars      [32]u32
+	char_count int
+	ctrl       int
+	shift      int
+	alt        int
+	focused    int
+}
 
 const wm_close = 0x0010
+const wm_setcursor = 0x0020
+const wm_dpichanged = 0x02E0
 const cw_usedefault = -2147483648
 const ws_overlappedwindow = 0x00CF0000
 const class_name = 'VCorePlatformWindow'
@@ -99,12 +136,97 @@ fn wnd_proc(hwnd voidptr, msg u32, wp usize, lp isize) isize {
 		C.vcore_win_mark_closed()
 		return 0
 	}
+	if msg == wm_dpichanged {
+		C.vcore_on_dpi_changed(hwnd, wp, lp)
+		return 0
+	}
+	if msg == wm_setcursor && (lp & 0xFFFF) == 1 { // HTCLIENT
+		C.SetCursor(C.vcore_cursor_load())
+		return 1
+	}
+	record_input(hwnd, msg, wp, lp)
 	return C.DefWindowProcW(hwnd, msg, wp, lp)
+}
+
+fn key_down(vk int) int {
+	return if C.GetKeyState(vk) < 0 { 1 } else { 0 }
+}
+
+// Düğme durumu; ilk basışta yakalama, son bırakışta serbest bırakma.
+fn set_button(hwnd voidptr, b int, is_down bool) {
+	mut p := C.vcore_in_ptr()
+	if is_down {
+		p.down[b] = 1
+		p.pressed[b] = 1
+		C.SetCapture(hwnd)
+	} else {
+		p.down[b] = 0
+		p.released[b] = 1
+		if p.down[0] + p.down[1] + p.down[2] == 0 {
+			C.ReleaseCapture()
+		}
+	}
+}
+
+// Win32 olaylarını C static'e yazar; wnd_proc her mesajda çağırır (DefWindowProc ayrıca çalışır).
+fn record_input(hwnd voidptr, msg u32, wp usize, lp isize) {
+	mut p := C.vcore_in_ptr()
+	match msg {
+		0x0200 { // WM_MOUSEMOVE: LOWORD/HIWORD işaretli; ekran dışı koordinat negatif olabilir
+			p.mouse_x = int(i16(lp & 0xFFFF))
+			p.mouse_y = int(i16((lp >> 16) & 0xFFFF))
+		}
+		0x0201 { set_button(hwnd, 0, true) }
+		0x0202 { set_button(hwnd, 0, false) }
+		0x0204 { set_button(hwnd, 1, true) }
+		0x0205 { set_button(hwnd, 1, false) }
+		0x0207 { set_button(hwnd, 2, true) }
+		0x0208 { set_button(hwnd, 2, false) }
+		0x020A { // WM_MOUSEWHEEL: delta wParam'ın işaretli üst kelimesinde, çentik 120
+			p.wheel += f32(i16((wp >> 16) & 0xFFFF)) / 120.0
+		}
+		0x0100, 0x0104 { // WM_KEYDOWN, WM_SYSKEYDOWN; tekrarlar (bit 30) kare listesine girmez
+			if (lp >> 30) & 1 == 0 && p.vkey_count < 16 {
+				p.vkeys[p.vkey_count] = u16(wp)
+				p.vkey_count++
+			}
+		}
+		0x0102 { // WM_CHAR: UTF-16 birimi; vekil çifti tek kod noktasına birleşir
+			pend, cp := utf16_combine(C.vcore_pending_get(), u16(wp))
+			C.vcore_pending_set(pend)
+			if c := cp {
+				if p.char_count < 32 {
+					p.chars[p.char_count] = c
+					p.char_count++
+				}
+			}
+		}
+		0x0007 { p.focused = 1 } // WM_SETFOCUS
+		0x0008 { // WM_KILLFOCUS: bırakılmamış düğmeler kapanır
+			for b in 0 .. 3 {
+				if p.down[b] != 0 {
+					p.down[b] = 0
+					p.released[b] = 1
+				}
+			}
+			C.ReleaseCapture()
+			p.focused = 0
+		}
+		else {}
+	}
+	if msg == 0x0200 || msg == 0x0100 || msg == 0x0104 || (msg >= 0x0201 && msg <= 0x0208) {
+		p.ctrl = key_down(0x11) // VK_CONTROL
+		p.shift = key_down(0x10) // VK_SHIFT
+		p.alt = key_down(0x12) // VK_MENU
+	}
 }
 
 // Pencere, piksel formatı ve 3.3 core context. Hata durumunda kısmi kaynaklar serbest bırakılır.
 pub fn Window.new(cfg WindowConfig) !Window {
 	C.vcore_win_reset()
+	if cfg.dpi_aware {
+		C.vcore_set_dpi_aware()
+	}
 	inst := C.GetModuleHandleW(unsafe { nil })
 	cls := class_name.to_wide()
 	// Sınıf zaten kayıtlıysa RegisterClassExW 0 döner; CreateWindowExW başarısızlığı bunu yakalar.
@@ -113,22 +235,31 @@ pub fn Window.new(cfg WindowConfig) !Window {
 		style:         0x20 // CS_OWNDC
 		lpfnWndProc:   voidptr(wnd_proc)
 		hInstance:     inst
+		hCursor:       C.vcore_cursor_load()
 		lpszClassName: cls
 	}
 	C.RegisterClassExW(&wc)
 
-	mut rc := [0, 0, cfg.width, cfg.height]!
-	C.AdjustWindowRect(&rc[0], ws_overlappedwindow, 0)
+	// Mantıksal boyut sistem DPI'ı ile ölçeklenir; DPI-farkında değilse 96 kalır (ölçek 1).
+	dpi := C.vcore_system_dpi()
+	mut rc := [0, 0, cfg.width * dpi / 96, cfg.height * dpi / 96]!
+	C.vcore_adjust_rect(&rc[0], ws_overlappedwindow, dpi)
 	ow := rc[2] - rc[0]
 	oh := rc[3] - rc[1]
-	hwnd := C.CreateWindowExW(0, cls, cfg.title.to_wide(), ws_overlappedwindow, cw_usedefault,
+	title := cfg.title.to_wide()
+	hwnd := C.CreateWindowExW(0, cls, title, ws_overlappedwindow, cw_usedefault,
 		cw_usedefault, ow, oh, unsafe { nil }, unsafe { nil }, inst, unsafe { nil })
+	unsafe {
+		free(voidptr(title))
+		free(voidptr(cls))
+	}
 	mut w := Window{
 		hwnd: hwnd
 	}
 	if hwnd == unsafe { nil } {
 		return error('CreateWindowExW basarisiz')
 	}
+	C.vcore_dpi_set(C.vcore_dpi_for_window(hwnd))
 	w.hdc = C.GetDC(hwnd)
 
 	mut pfd := C.PIXELFORMATDESCRIPTOR{
@@ -209,6 +340,49 @@ pub fn (mut w Window) poll() bool {
 		C.DispatchMessageW(&msg)
 	}
 	return C.vcore_win_closed() == 0
+}
+
+// Bu karenin girdisini döner ve kare başı alanları sıfırlar (pressed, released, wheel, vkeys, chars).
+pub fn (mut w Window) input() InputFrame {
+	mut p := C.vcore_in_ptr()
+	mut f := InputFrame{
+		mouse_x:    p.mouse_x
+		mouse_y:    p.mouse_y
+		wheel:      p.wheel
+		vkey_count: p.vkey_count
+		char_count: p.char_count
+		ctrl:       p.ctrl != 0
+		shift:      p.shift != 0
+		alt:        p.alt != 0
+		focused:    p.focused != 0
+	}
+	for i in 0 .. 3 {
+		f.down[i] = p.down[i] != 0
+		f.pressed[i] = p.pressed[i] != 0
+		f.released[i] = p.released[i] != 0
+		p.pressed[i] = 0
+		p.released[i] = 0
+	}
+	for i in 0 .. p.vkey_count {
+		f.vkeys[i] = p.vkeys[i]
+	}
+	for i in 0 .. p.char_count {
+		f.chars[i] = p.chars[i]
+	}
+	p.wheel = 0
+	p.vkey_count = 0
+	p.char_count = 0
+	return f
+}
+
+// Ölçek = pencere DPI / 96; 1.0 DPI-farkında olmayan süreçte.
+pub fn (w &Window) dpi_scale() f32 {
+	return f32(C.vcore_dpi_get()) / 96.0
+}
+
+// İmleç, WM_SETCURSOR istemci alanında iken uygulanır.
+pub fn (mut w Window) set_cursor(c Cursor) {
+	C.vcore_cursor_set(cursor_idc(c))
 }
 
 pub fn (w &Window) swap() {

@@ -3,10 +3,11 @@ module platform
 // Pencere yapılandırması. width/height istemci alanıdır.
 pub struct WindowConfig {
 pub:
-	title   string = 'V-Core'
-	width   int    = 1280
-	height  int    = 720
-	visible bool   = true
+	title     string = 'V-Core'
+	width     int    = 1280
+	height    int    = 720
+	visible   bool   = true
+	dpi_aware bool   = true
 }
 
 // Saf fonksiyon: sayaç tiklerini ns'ye çevirir. Tam ve kesir kısımlar ayrı hesaplanır.
