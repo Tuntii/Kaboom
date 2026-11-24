@@ -139,12 +139,23 @@ fn run_editor(args []string) {
 			eof = true
 		}
 		if !win.poll() {
-			// WM_CLOSE pencereyi kapatmaz: istek editöre gider; kaydedilmemiş değişiklik varsa şerit çıkar.
+			// WM_QUIT her zaman çıkar; WM_CLOSE pencereyi kapatmaz: istek editöre gider (kirliyse şerit).
+			if win.quit_requested() {
+				break
+			}
 			win.clear_close()
 			ed.request_close()
 		}
 		fw, fh := win.size()
 		if fw <= 0 || fh <= 0 {
+			// Küçültülmüşken kare çizilmez: kapanış burada işlenir; şerit gerekiyorsa pencere geri yüklenir.
+			ed.poll_close(mut srv)
+			if ed.should_close() {
+				break
+			}
+			if ed.confirm_pending() {
+				win.restore()
+			}
 			time.sleep(time.millisecond)
 			continue
 		}

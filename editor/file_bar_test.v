@@ -282,3 +282,77 @@ fn test_save_error_shows_status() {
 	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1, time_ms: 4001 })
 	assert e.flash_text() == '', '4 sn sonra kaybolur'
 }
+
+fn test_poll_close_clean_closes_at_once() {
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	e.request_close()
+	e.poll_close(mut srv)
+	assert e.should_close(), 'kucultulmus temiz pencere hemen kapanir'
+}
+
+fn test_poll_close_dirty_keeps_request_pending() {
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	fb_spawn(mut srv)
+	e.request_close()
+	e.poll_close(mut srv)
+	assert !e.should_close(), 'kirli pencere kare cizilmeden kapanmaz'
+	assert e.confirm_pending(), 'serit bekleyen istek olarak kalir'
+	assert e.confirm == .close
+}
+
+fn test_esc_closes_field_and_cancels_confirm() {
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	edt_click(mut c, mut e, mut srv, 'Kaydet')
+	assert e.file_field == .save
+	edt_frame(mut c, mut e, mut srv, edt_key(.escape))
+	assert e.file_field == .idle, 'Esc yol alanini kapatir'
+	fb_spawn(mut srv)
+	e.request_close()
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.confirm == .close
+	edt_frame(mut c, mut e, mut srv, edt_key(.escape))
+	assert e.confirm == .idle && !e.should_close(), 'Esc bekleyen istegi iptal eder'
+}
+
+fn test_strip_save_failure_keeps_window_open() {
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	fb_spawn(mut srv)
+	e.path.set('C:/vcore_no_such_dir_m4c9/x.vscene')
+	e.request_close()
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.confirm == .close
+	fb_click_id(mut c, mut e, mut srv, fb_strip_id(mut c, 'Kaydet'))
+	assert !e.should_close(), 'kayit basarisizsa pencere acik kalir'
+	assert e.confirm == .close, 'serit acik kalir'
+	assert e.flash_text().len > 0, 'hata gorunur'
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.flash_text().len > 0, 'hata durum cubugunda kare boyunca gorunur'
+}

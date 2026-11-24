@@ -79,6 +79,10 @@ fn C.vcore_win_reset()
 fn C.vcore_win_mark_closed()
 fn C.vcore_win_closed() int
 fn C.vcore_win_clear_closed()
+fn C.vcore_win_mark_quit()
+fn C.vcore_win_quit() int
+fn C.IsIconic(hwnd voidptr) int
+fn C.PostQuitMessage(code int)
 fn C.vcore_in_ptr() &C.VcoreInput
 fn C.vcore_pending_get() u16
 fn C.vcore_pending_set(v u16)
@@ -357,12 +361,27 @@ pub fn (mut w Window) poll() bool {
 	mut msg := C.MSG{}
 	for C.PeekMessageW(&msg, unsafe { nil }, 0, 0, 0x0001) != 0 { // PM_REMOVE
 		if msg.message == 0x0012 { // WM_QUIT
-			C.vcore_win_mark_closed()
+			C.vcore_win_mark_quit()
 		}
 		C.TranslateMessage(&msg)
 		C.DispatchMessageW(&msg)
 	}
-	return C.vcore_win_closed() == 0
+	return C.vcore_win_closed() == 0 && C.vcore_win_quit() == 0
+}
+
+// WM_QUIT kapanış bayrağından ayrıdır: clear_close onu silmez.
+pub fn (w &Window) quit_requested() bool {
+	return C.vcore_win_quit() != 0
+}
+
+// Küçültülmüş pencereyi geri yükler (kaydedilmemiş değişiklik şeridi görünsün diye).
+pub fn (mut w Window) restore() {
+	C.ShowWindow(w.hwnd, 9) // SW_RESTORE
+}
+
+// Küçültülmüş mü (test ve tanı).
+pub fn (w &Window) minimized() bool {
+	return C.IsIconic(w.hwnd) != 0
 }
 
 // Bu karenin girdisini döner ve kare başı alanları sıfırlar (pressed, released, wheel, vkeys, chars).

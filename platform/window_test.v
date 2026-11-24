@@ -213,3 +213,30 @@ fn test_sc_keymenu_consumed() {
 	defer { w.close() }
 	assert C.SendMessageW(w.hwnd, 0x0112, 0xF100, 0) == 0
 }
+
+// Küçültülmüş pencere restore ile geri gelir (gizli pencerede de).
+fn test_restore_leaves_minimized() {
+	mut w := Window.new(WindowConfig{ visible: false, width: 64, height: 64 }) or {
+		eprintln('atlandi: GL yok: ${err}')
+		return
+	}
+	defer { w.close() }
+	C.ShowWindow(w.hwnd, 6) // SW_MINIMIZE
+	assert w.minimized()
+	w.restore()
+	assert !w.minimized()
+}
+
+// WM_QUIT kapanış bayrağından ayrıdır: poll false döner, quit_requested görür, clear_close onu silmez.
+fn test_wm_quit_is_not_close() {
+	mut w := Window.new(WindowConfig{ visible: false, width: 64, height: 64 }) or {
+		eprintln('atlandi: GL yok: ${err}')
+		return
+	}
+	defer { w.close() }
+	C.PostQuitMessage(0)
+	assert !w.poll()
+	assert w.quit_requested()
+	w.clear_close()
+	assert w.quit_requested()
+}

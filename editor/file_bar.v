@@ -296,10 +296,7 @@ fn (mut e Editor) file_bar(mut c ui.Context, mut srv protocol.Server) {
 			e.focus_next = false
 		}
 		enter := c.text_field('Yol', mut e.field, field_w)
-		if key_hit(c.input(), .escape) {
-			e.file_field = .idle
-			e.confirm = .idle
-		} else if enter {
+		if enter {
 			e.field_commit(mut srv)
 		}
 	}
@@ -314,6 +311,10 @@ fn (mut e Editor) file_bar(mut c ui.Context, mut srv protocol.Server) {
 
 // Ctrl+Z geri al; Ctrl+Y ve Ctrl+Shift+Z yineler; Ctrl+S kaydeder. c.shortcut klavye bir alandayken atlar.
 fn (mut e Editor) file_shortcuts(mut c ui.Context, mut srv protocol.Server) {
+	// Esc: açık yol alanını ya da bekleyen şeridi kapatır; alan Esc'i yutsa da burada görülür.
+	if key_hit(c.input(), .escape) && (e.file_field != .idle || e.confirm != .idle) {
+		e.cancel_confirm()
+	}
 	if !c.input().ctrl {
 		return
 	}
@@ -336,4 +337,14 @@ fn key_hit(inp &ui.Input, k ui.Key) bool {
 		}
 	}
 	return false
+}
+
+// Kapatma isteğini kare çizmeden işler (küçültülmüş pencere): temiz değişiklik hemen kapanır, kirli olan şeride döner.
+pub fn (mut e Editor) poll_close(mut srv protocol.Server) {
+	e.settle_confirm(mut srv)
+}
+
+// Kaydedilmemiş değişiklik şeridi bekliyor mu (küçültülmüş pencere bunu görmek için geri yüklenir).
+pub fn (e &Editor) confirm_pending() bool {
+	return e.confirm != .idle
 }

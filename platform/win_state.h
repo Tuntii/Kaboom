@@ -6,6 +6,7 @@
 #include <windows.h>
 
 static int vcore_win_closed_flag = 0;
+static int vcore_win_quit_flag = 0; // WM_QUIT ayrı: kapanış onayı bunu engelleyemez
 
 // Olay yazımı wnd_proc'ta (V), okuma input() ile; alanlar V tarafında int olarak erişilir.
 typedef struct {
@@ -49,10 +50,13 @@ static void *vcore_cursor_load(void) { return LoadCursorW(NULL, MAKEINTRESOURCEW
 
 static void vcore_win_reset(void) {
 	vcore_win_closed_flag = 0;
+	vcore_win_quit_flag = 0;
 	vcore_input_reset();
 }
 static void vcore_win_mark_closed(void) { vcore_win_closed_flag = 1; }
 static int vcore_win_closed(void) { return vcore_win_closed_flag; }
+static void vcore_win_mark_quit(void) { vcore_win_quit_flag = 1; }
+static int vcore_win_quit(void) { return vcore_win_quit_flag; }
 static void vcore_win_clear_closed(void) { vcore_win_closed_flag = 0; }
 
 // Frekans değişmez; ilk çağrıda okunur. 0 dönerse 1 kabul edilir ki now_ns sıfıra bölmesin.
