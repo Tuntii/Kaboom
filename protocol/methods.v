@@ -84,7 +84,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'sim.reset'
 		params: 'none'
-		result: '{}; dünyayı, kuyruğu ve kaydı sıfırlar'
+		result: '{}; dünyayı, kuyruğu, kaydı ve geçmişi sıfırlar'
 	},
 	CommandDoc{
 		method: 'sim.state_hash'
@@ -105,6 +105,16 @@ const command_docs = [
 		method: 'capture.screenshot'
 		params: '{"path": string}'
 		result: '{"path", "width", "height"}; yalnız pencereli çalışmada (vcore run); headless modda 1013'
+	},
+	CommandDoc{
+		method: 'history.undo'
+		params: 'none'
+		result: '{"applied": bool, "commands": n, "failed": n, "remap": [{"old": id, "new": id}]}; boş yığında applied false, hata değil'
+	},
+	CommandDoc{
+		method: 'history.redo'
+		params: 'none'
+		result: '{"applied": bool, "commands": n, "failed": n, "remap": [{"old": id, "new": id}]}; boş yığında applied false, hata değil'
 	},
 	CommandDoc{
 		method: 'record.start'

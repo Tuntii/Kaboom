@@ -362,3 +362,33 @@ fn test_oversized_group_keeps_older_group() {
 	assert g.block_count() == 1
 	assert g.block(0)[0].value == hist_bits(0.0)
 }
+
+fn test_staged_group_readable_and_abandon() {
+	region, mut w, mut h := hist_env(16, 8)
+	defer {
+		memory.release(region)
+	}
+	e := w.spawn() or { panic('spawn') }
+	assert w.add_component(e, ecs.transform_id) == .ok
+	h.begin_group()
+	assert hist_step(mut h, mut w, set_cmd(e, 0, 4.0)).status == .ok
+	assert hist_step(mut h, mut w, set_cmd(e, 0, 5.0)).status == .ok
+	// Açık grup okunabilir: block(0) en son blok (eski değer 4.0), block(1) ilki (eski değer 0.0).
+	st := h.staged()
+	assert st.block_count() == 2
+	assert st.block(0)[0].value == hist_bits(4.0)
+	assert st.block(1)[0].value == hist_bits(0.0)
+	assert !h.stage_overflowed()
+	// Atılan grup hiçbir yığına girmez ve derinlik sıfırlanır.
+	h.abandon_group()
+	assert h.undo_len() == 0
+	assert h.redo_len() == 0
+	assert h.staged().block_count() == 0
+	h.end_group()
+	// Yakalama kapalıyken (off) komutlar geçmişe girmez.
+	h.set_mode(.off)
+	assert hist_step(mut h, mut w, set_cmd(e, 0, 6.0)).status == .ok
+	h.set_mode(.normal)
+	assert h.undo_len() == 0
+	assert h.staged().block_count() == 0
+}

@@ -157,6 +157,11 @@ pub fn (mut s Server) handle_from(line string, source cmd.Source) ?string {
 	if s.region == unsafe { nil } {
 		return closed_line
 	}
+	// Her istek bir geçmiş grubudur; açık editör grubu varsa istek onun içine düşer (derinlik sayılır).
+	s.engine.history.begin_group()
+	defer {
+		s.engine.history.end_group()
+	}
 	arena_reset()
 	// Ayrıştırıcı özyinelemelidir ve NUL ile kesilen metinleri (strlen görünümü) kabul etmez:
 	// derinlik ve NUL denetimi decode'a girmeden yapılır.
@@ -242,6 +247,8 @@ fn (mut s Server) dispatch(method string, p Val) !Val {
 		'sim.pause' { return s.sim_pause() }
 		'sim.resume' { return s.sim_resume() }
 		'capture.screenshot' { return s.capture_screenshot(p) }
+		'history.undo' { return s.history_undo() }
+		'history.redo' { return s.history_redo() }
 		'record.start' { return s.record_start() }
 		'record.stop' { return s.record_stop(p) }
 		'replay.run' { return s.replay_run(p) }

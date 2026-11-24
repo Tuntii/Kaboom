@@ -8,6 +8,7 @@ pub enum HistoryMode {
 	normal
 	undoing
 	redoing
+	off // yakalama kapalı: iptal edilen grubun ters blokları geçmişe girmez
 }
 
 // Bir komutun ters bloğu. Halkada start mutlak komut sırasıdır; hazırlama alanında göreli ofsettir.
@@ -331,7 +332,7 @@ fn (mut h History) put_fields(w &ecs.World, e ecs.EntityID, comp u16, source Sou
 // uygulanamayacak komutlar (yok varlık/bileşen, okunamayan alan) hazırlanmaz.
 pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 	h.prepared = false
-	if c.source == .script {
+	if h.mode == .off || c.source == .script {
 		return
 	}
 	h.scratch_n = 0
@@ -486,6 +487,31 @@ pub fn (mut h History) remap(old ecs.EntityID, new ecs.EntityID) {
 	for i in 0 .. h.stacks.len {
 		h.stacks[i].remap(old, new)
 	}
+}
+
+// Açık grubun yakalanmış blokları (ters sırada: block(0) en son blok). Yığın okunmaz, hazırlama alanı okunur.
+pub fn (h &History) staged() GroupView {
+	return GroupView{
+		cmds:   h.stage_cmds
+		blocks: h.stage_blks
+		cap:    u64(h.stage_cap)
+		bstart: 0
+		bend:   u64(h.stage_b)
+	}
+}
+
+// Açık grup kapasiteyi aştıysa blokların bir kısmı yakalanmamıştır; staged eksik kalır.
+pub fn (h &History) stage_overflowed() bool {
+	return h.stage_over
+}
+
+// Açık grubu hiçbir yığına koymadan atar ve derinliği sıfırlar. Çağıran önce staged ile blokları okumalıdır.
+pub fn (mut h History) abandon_group() {
+	h.depth = 0
+	h.stage_t = -1
+	h.stage_n = 0
+	h.stage_b = 0
+	h.stage_over = false
 }
 
 pub fn (mut h History) clear() {
