@@ -112,11 +112,13 @@ mut:
 	drag_dy      f32
 	cursor       CursorHint
 	last_id      u32 // en son açılan kutunun kimliği (ipucu hedefi)
-	edit_id      u32 // düzenlenen metin/sayı alanı; odakla birlikte değişir
-	edit_buf     TextBuf // sayı alanı düzenleme metni
-	edit_snap    TextBuf // metin alanı: odak anındaki metin (Esc geri alır)
-	edit_cur     int
-	edit_fresh   bool // sayı alanı: ilk yazım metni değiştirir
+	txt_id       u32 // odaktaki metin alanı (en fazla bir tane)
+	txt_snap     TextBuf // metin alanı: odak anındaki metin (Esc geri alır)
+	txt_cur      int
+	num_id       u32 // düzenlenen sayı alanı; metin alanı odağı bunu silmez
+	num_buf      TextBuf // sayı alanı düzenleme metni
+	num_cur      int
+	num_fresh    bool // sayı alanı: ilk yazım metni değiştirir (yazım gelene kadar kalır)
 	num_moved    bool // bu basışta sürükleme oldu mu (tıklama düzenlemeye geçmez)
 	num_bufs     [64][32]u8 // sayı alanı görüntü metinleri; kare başına döner
 	num_n        int

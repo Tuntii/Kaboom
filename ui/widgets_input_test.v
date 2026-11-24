@@ -394,3 +394,178 @@ fn test_input_widgets_zero_heap_allocs() {
 	assert memory.heap_alloc_count() == before
 	assert shown
 }
+
+// Tıklama: hover, basış, bırakma (üç kare).
+fn in_tap(mut c Context, body fn (mut c Context), x f32, y f32) {
+	wgt_frame(mut c, mouse_at(x, y), body)
+	wgt_frame(mut c, press_at(x, y), body)
+	wgt_frame(mut c, release_at(x, y), body)
+}
+
+// Alanın düğüm dikdörtgeni ve içindeki imleç (1 px kutu) dikdörtgeni.
+fn in_field_caret(c &Context, fid u32) (Rect, Rect) {
+	mut fi := -1
+	for i in 0 .. c.n {
+		if c.nodes[i].id == fid && c.nodes[i].kind == .plain {
+			fi = i
+			break
+		}
+	}
+	assert fi >= 0
+	f := c.nodes[fi]
+	field := Rect{
+		x: f.pos[0]
+		y: f.pos[1]
+		w: f.sz[0]
+		h: f.sz[1]
+	}
+	mut caret := Rect{}
+	for j in 0 .. c.n {
+		nd := c.nodes[j]
+		if nd.parent == fi && nd.kind == .plain && nd.sz[0] == 1 {
+			caret = Rect{
+				x: nd.pos[0]
+				y: nd.pos[1]
+				w: nd.sz[0]
+				h: nd.sz[1]
+			}
+		}
+	}
+	return field, caret
+}
+
+// Düzenlenen sayı alanı odağı kaybedince (metin alanına tıklama) değer uygulanır.
+fn test_number_commits_when_text_field_takes_focus() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+			tp.changed++
+		}
+		if c.text_field('alan', mut tp.buf, 120) {
+			tp.enter++
+		}
+	}
+	in_tap(mut c, body, 10, 10)
+	wgt_frame(mut c, in_text('7'), body)
+	assert t.value == 0
+	in_tap(mut c, body, 10, 40)
+	assert t.value == 7
+	assert t.changed == 1
+}
+
+// Boş bir kare, ilk tuşu değiştirmez: ilk yazım metni siler, sonrası ekler.
+fn test_number_first_keystroke_replaces_after_idle() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 12
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+			tp.changed++
+		}
+	}
+	in_tap(mut c, body, 10, 10)
+	wgt_frame(mut c, Input{}, body)
+	wgt_frame(mut c, in_text('5'), body)
+	wgt_frame(mut c, in_key(.enter), body)
+	assert t.value == 5
+	assert t.changed == 1
+}
+
+// Metin alanı genişliğinden uzun yazı: imleç alanın içinde kalır; Home ofseti sıfırlar.
+fn test_text_field_scrolls_caret_in_view() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.text_field('alan', mut tp.buf, 80) {
+			tp.enter++
+		}
+	}
+	wgt_frame(mut c, in_key(.tab), body)
+	// Bir karede en fazla 32 karakter gelir (platform sınırı).
+	wgt_frame(mut c, in_text('abcdefghijklmnopqrstuvwxyz'), body)
+	wgt_frame(mut c, in_text('0123456789'), body)
+	fid := c.id('alan')
+	assert c.states[c.probe(fid)].scroll > 0
+	field, caret := in_field_caret(&c, fid)
+	assert caret.x >= field.x && caret.x + caret.w <= field.x + field.w
+
+	wgt_frame(mut c, in_key(.home), body)
+	assert c.states[c.probe(fid)].scroll == 0
+	field2, caret2 := in_field_caret(&c, fid)
+	assert caret2.x >= field2.x && caret2.x + caret2.w <= field2.x + field2.w
+}
+
+// Tab, sayı alanından çıkar ve düzenlemeyi uygular; metin alanından Tab sayı alanına döner.
+fn test_tab_leaves_number_field_and_commits() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+			tp.changed++
+		}
+		if c.text_field('alan', mut tp.buf, 120) {
+			tp.enter++
+		}
+	}
+	wgt_frame(mut c, in_key(.tab), body)
+	assert c.focused_id() == c.id('n')
+	wgt_frame(mut c, in_key(.enter), body)
+	wgt_frame(mut c, in_text('7'), body)
+	wgt_frame(mut c, in_key(.tab), body)
+	assert c.focused_id() == c.id('alan')
+	assert t.value == 7
+	assert t.changed == 1
+	wgt_frame(mut c, in_key(.tab), body)
+	assert c.focused_id() == c.id('n')
+}
+
+// Sayı alanında Space düzenlemeyi başlatır (tek tetikleme); Enter bir kez uygular.
+fn test_number_space_starts_enter_commits_once() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+			tp.changed++
+		}
+	}
+	wgt_frame(mut c, in_key(.tab), body)
+	wgt_frame(mut c, in_key(.space), body)
+	assert t.changed == 0
+	assert c.num_id == c.id('n')
+	wgt_frame(mut c, in_text('4'), body)
+	wgt_frame(mut c, in_key(.enter), body)
+	assert t.value == 4
+	assert t.changed == 1
+	wgt_frame(mut c, Input{}, body)
+	assert t.changed == 1
+}
+
+// Esc açık menüyü kapatır.
+fn test_menu_closes_on_escape() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			c.menu_end()
+		}
+	}
+	in_tap(mut c, body, 5, 5)
+	assert t.open
+	wgt_frame(mut c, in_key(.escape), body)
+	assert !t.open
+}

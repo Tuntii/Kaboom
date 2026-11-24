@@ -5,9 +5,6 @@ import math
 // Sürüklemede adım/4 mantıksal piksel başına bir adım (Shift ×10).
 const drag_px_div = f32(4)
 
-// Açılır menü ve ipucu: yukarıdan kayma ve kenar boşlukları tokenlardan.
-const menu_slide = space_1
-
 // UTF-8 metin tamponu; kapasite sabit, tahsis yok. Uzunluk bayt cinsinden.
 pub struct TextBuf {
 pub mut:
@@ -291,6 +288,21 @@ fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
 	return out, cur
 }
 
+// Metni değiştiren girdi var mı (yazılabilir karakter, Backspace, Delete).
+fn edit_hits(inp Input) bool {
+	for i in 0 .. inp.char_count {
+		if inp.chars[i] >= 32 && inp.chars[i] != 127 {
+			return true
+		}
+	}
+	for i in 0 .. inp.key_count {
+		if inp.keys[i] == .backspace || inp.keys[i] == .delete {
+			return true
+		}
+	}
+	return false
+}
+
 // Odaktaki alan: imleç metni böler, imleç 1 px text_primary; odakta değilse tek parça.
 fn (mut c Context) field_text(buf &TextBuf, cur int, role TextRole, color Color, caret bool) {
 	if !caret {
@@ -308,17 +320,23 @@ fn (mut c Context) field_text(buf &TextBuf, cur int, role TextRole, color Color,
 	c.text(after, role, color)
 }
 
-fn (mut c Context) begin_edit(id u32, v f32) {
-	mut tmp := [32]u8{}
-	n := format_f32(v, num_dec(v), mut tmp)
-	c.edit_buf.set(unsafe { tos(&tmp[0], n) })
-	c.edit_cur = c.edit_buf.len
-	c.edit_fresh = true
-	c.edit_id = id
+// Metin alanı iç genişliği: kenar boşlukları ve 1 px imleç düşülür.
+fn text_inner(width f32) f32 {
+	return width - 2 * space_2 - 1
 }
 
-fn (mut c Context) end_edit(id u32) {
-	c.edit_id = 0
+fn (mut c Context) begin_num(id u32, v f32) {
+	mut tmp := [32]u8{}
+	n := format_f32(v, num_dec(v), mut tmp)
+	c.num_buf.set(unsafe { tos(&tmp[0], n) })
+	c.num_cur = c.num_buf.len
+	c.num_fresh = true
+	c.num_id = id
+}
+
+// Düzenleme bitince sayı alanı odaktan da çıkar (Enter, Esc ya da odak kaybı).
+fn (mut c Context) end_num(id u32) {
+	c.num_id = 0
 	if c.focus == id {
 		c.focus = 0
 	}
@@ -344,28 +362,49 @@ fn num_clamp(v f32, min f32, max f32) f32 {
 }
 
 // Metin alanı: odaklıyken yazılır; Enter onaylar (true), Esc odak anındaki metne döner.
+// Yatay kaydırma: imleç iç genişlikte kalır (kalıcı ofset, kutu scroll_x ile uygular).
 pub fn (mut c Context) text_field(label string, mut buf TextBuf, width f32) bool {
 	id := c.id(label)
 	it := c.interact_kb(id, true, false)
 	if it.focused {
-		if c.edit_id != id {
-			c.edit_id = id
-			c.edit_snap = buf
-			c.edit_cur = buf.len
+		if c.txt_id != id {
+			c.txt_id = id
+			c.txt_snap = buf
+			c.txt_cur = buf.len
 		}
-	} else if c.edit_id == id {
-		c.edit_id = 0
+	} else if c.txt_id == id {
+		c.txt_id = 0
 	}
 	mut enter := false
 	if it.focused {
-		r, nc := edit_keys(mut buf, c.edit_cur, c.inp)
-		c.edit_cur = nc
+		r, nc := edit_keys(mut buf, c.txt_cur, c.inp)
+		c.txt_cur = nc
 		enter = r.enter
 		if r.esc {
-			buf = c.edit_snap
-			c.edit_cur = buf.len
-			c.end_edit(id)
+			buf = c.txt_snap
+			c.txt_cur = buf.len
+			c.txt_id = 0
+			if c.focus == id {
+				c.focus = 0
+			}
 		}
+	}
+	// Kaydırma ofseti, düzen geçişinden önce: imleç soldan ya da sağdan taşarsa kenara yapıştırılır.
+	h := c.touch(id)
+	if h >= 0 {
+		mut sc := f32(0)
+		if c.txt_id == id {
+			cx := c.atl.measure(unsafe { tos(&buf.data[0], c.txt_cur) }, .body)
+			inner := text_inner(width)
+			sc = c.states[h].scroll
+			if cx - sc < 0 {
+				sc = cx
+			}
+			if cx - sc > inner {
+				sc = cx - inner
+			}
+		}
+		c.states[h].scroll = sc
 	}
 	c.open(label, Box{
 		dir:         .row
@@ -378,17 +417,19 @@ pub fn (mut c Context) text_field(label string, mut buf TextBuf, width f32) bool
 		border_w:    1
 		radius:      radius_control
 		clip:        true
+		scroll_x:    true
 	})
-	c.field_text(&buf, c.edit_cur, .body, text_primary, it.focused)
+	c.field_text(&buf, c.txt_cur, .body, text_primary, c.txt_id == id)
 	c.close()
 	return enter
 }
 
 // Sayı alanı: yatay sürükleme değeri değiştirir; tıklayıp bırakma düzenleme moduna geçer.
 // Enter ayrıştırıp uygular; ayrıştırılamazsa eski değer kalır. Değer değiştiyse true.
+// Odak başka alana geçerse bekleyen düzenleme aynı kare uygulanır (commit on blur).
 pub fn (mut c Context) number_field(label string, mut value &f32, unit string, step f32, min f32, max f32) bool {
 	id := c.id(label)
-	editing := c.edit_id == id
+	mut editing := c.num_id == id
 	it := c.interact_kb(id, true, !editing)
 	if c.inp.pressed[0] && it.hovered {
 		c.num_moved = false
@@ -401,24 +442,24 @@ pub fn (mut c Context) number_field(label string, mut value &f32, unit string, s
 		v = num_clamp(cur + it.drag_dx * step / drag_px_div * mult, min, max)
 	}
 	if it.clicked && !c.num_moved && !editing {
-		c.begin_edit(id, cur)
+		c.begin_num(id, cur)
 	}
 	if editing {
-		if c.edit_fresh && (c.inp.char_count > 0 || c.inp.key_count > 0) {
-			c.edit_buf.len = 0
-			c.edit_cur = 0
+		if c.num_fresh && edit_hits(c.inp) {
+			c.num_buf.len = 0
+			c.num_cur = 0
+			c.num_fresh = false
 		}
-		c.edit_fresh = false
-		r, nc := edit_keys(mut c.edit_buf, c.edit_cur, c.inp)
-		c.edit_cur = nc
-		// Enter ya da odak kaybı ayrıştırır; Esc değeri değiştirmeden çıkar.
+		r, nc := edit_keys(mut c.num_buf, c.num_cur, c.inp)
+		c.num_cur = nc
+		// Enter, Esc ya da odak kaybı düzenlemeyi bitirir; Esc değeri değiştirmez.
 		if r.enter || !it.focused {
-			if nv := parse_f32(c.edit_buf.str()) {
+			if nv := parse_f32(c.num_buf.str()) {
 				v = num_clamp(nv, min, max)
 			}
-			c.end_edit(id)
+			c.end_num(id)
 		} else if r.esc {
-			c.end_edit(id)
+			c.end_num(id)
 		}
 	}
 	if it.clicked {
@@ -448,8 +489,8 @@ pub fn (mut c Context) number_field(label string, mut value &f32, unit string, s
 	})
 	c.text(label, .body, text_secondary)
 	c.spacer()
-	if c.edit_id == id {
-		c.field_text(&c.edit_buf, c.edit_cur, .mono, text_primary, true)
+	if c.num_id == id {
+		c.field_text(&c.num_buf, c.num_cur, .mono, text_primary, true)
 	} else {
 		c.text(unsafe { tos(&c.num_bufs[k][0], n) }, .mono, text_primary)
 	}
@@ -520,6 +561,9 @@ pub fn (mut c Context) menu_button(label string, text string) bool {
 	return open
 }
 
+// Yukarıdan kayma (px); menü açılışında 0'a iner.
+const menu_slide = space_1
+
 // Menü öğesi: tıklanınca true ve menü kapanır.
 pub fn (mut c Context) menu_item(text string) bool {
 	c.push_id(2)
@@ -528,7 +572,7 @@ pub fn (mut c Context) menu_item(text string) bool {
 	t := c.hover_t(iid, it.hovered)
 	c.open(text, Box{
 		dir:         .row
-		width:       fit()
+		width:       grow()
 		height:      fixed(row_h)
 		padding:     pad_xy(space_2, 0)
 		align_cross: .center

@@ -97,6 +97,7 @@ pub:
 	radius      f32
 	clip        bool
 	scroll_y    bool
+	scroll_x    bool // yatay kaydırma (satır): ofset kalıcı durumda, ana eksende
 }
 
 enum NodeKind {
@@ -165,9 +166,10 @@ fn resolve_size(s Size, intr f32, avail f32) f32 {
 }
 
 fn intr_of(s Size, content f32, pad f32) f32 {
+	// grow çocuğun en küçük boyutu içeriği+pad'dir: fit ebeveyn onu hesaba katar.
 	v := match s.kind {
 		.fixed { s.value }
-		.fit { content + pad }
+		.fit, .grow { content + pad }
 		else { f32(0) }
 	}
 
@@ -348,6 +350,19 @@ fn (mut c Context) place() {
 		total += gap * f32(cnt - 1)
 		free := main_inner - total
 		mut prog := align_offset(nd.box.align_main, free)
+		if nd.box.scroll_x && nd.slot >= 0 && main_x {
+			content := total + p.l + p.r
+			max_off := if content > nd.sz[0] { content - nd.sz[0] } else { f32(0) }
+			mut offx := c.states[nd.slot].scroll
+			if offx > max_off {
+				offx = max_off
+			}
+			if offx < 0 {
+				offx = 0
+			}
+			c.states[nd.slot].scroll = offx
+			prog -= offx
+		}
 		mut extra := f32(0)
 		if nd.box.align_main == .between && cnt > 1 && free > 0 {
 			extra = free / f32(cnt - 1)

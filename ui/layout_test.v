@@ -334,3 +334,38 @@ fn test_child_outside_clip_emits_nothing() {
 	l := c.end()
 	assert l.len() == 0
 }
+
+// Fit ebeveyn, grow çocukların en küçük (içerik) genişliğini alır; çocuklar o genişliğe dolar.
+fn test_grow_child_contributes_min_content_to_fit_parent() {
+	mut atl := layout_atlas(1.0)
+	w_short := atl.measure('abc', .body)
+	w_long := atl.measure('abcdefgh', .body)
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	c.begin(Input{}, 400, 100, 1.0)
+	c.open('col', Box{ dir: .column, width: fit(), height: fixed(100) })
+	c.open('a', Box{ width: grow(), height: fit() })
+	c.text('abc', .body, text_primary)
+	c.close()
+	c.open('b', Box{ width: grow(), height: fit() })
+	c.text('abcdefgh', .body, text_primary)
+	c.close()
+	c.close()
+	c.end()
+	col := layout_node(&c, c.id('col'))
+	a := layout_node(&c, c.id('a'))
+	b := layout_node(&c, c.id('b'))
+	assert w_short < w_long
+	assert col.sz[0] == w_long
+	assert a.sz[0] == w_long
+	assert b.sz[0] == w_long
+}
+
+// Kimliğin ilk düğümü (test yardımcısı).
+fn layout_node(c &Context, id u32) Node {
+	for i in 0 .. c.n {
+		if c.nodes[i].id == id {
+			return c.nodes[i]
+		}
+	}
+	panic('düğüm yok')
+}
