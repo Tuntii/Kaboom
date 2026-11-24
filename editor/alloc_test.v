@@ -40,6 +40,7 @@ fn test_idle_frames_zero_alloc() {
 		c.end()
 	}
 	assert e.sv.sel != none, 'gizmo testinin önkoşulu: varlık seçili'
+	assert e.ins.nhits > 0, 'inspektör testinin önkoşulu: seçili varlığın alanları çizilir'
 	before := memory.heap_alloc_count()
 	for k in 10 .. 110 {
 		c.begin(ui.Input{ mouse_x: -1, mouse_y: -1, time_ms: f64(k) * 16 }, 1440, 900, 1.0)

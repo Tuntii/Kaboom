@@ -398,8 +398,13 @@ pub fn (c &Context) node_overflow() u32 {
 
 // Son tamamlanan düzendeki dikdörtgen; kare denetimi yok (vitrin betiği kareler arası konum bulur).
 pub fn (c &Context) last_rect(label string) ?Rect {
-	h := c.probe(c.id(label))
-	if h < 0 || c.states[h].id != c.id(label) || c.states[h].rect_frame == 0 {
+	return c.last_rect_id(c.id(label))
+}
+
+// Kimlikle son karenin dikdörtgeni (kimlik push_id yığınına bağlıysa etikete bakılamaz); tahsissiz.
+pub fn (c &Context) last_rect_id(id u32) ?Rect {
+	h := c.probe(id)
+	if h < 0 || c.states[h].id != id || c.states[h].rect_frame == 0 {
 		return none
 	}
 	return c.states[h].rect

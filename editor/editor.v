@@ -30,6 +30,7 @@ mut:
 	cam        EditorCamera
 	sv         SceneState
 	hier       Hierarchy
+	ins        Inspector
 	path       ui.TextBuf
 	started    bool
 	timed      bool
@@ -243,7 +244,7 @@ fn (mut e Editor) body(mut c ui.Context, mut srv protocol.Server) {
 		gap:     ui.space_2
 		bg:      ui.surface_1
 	})
-	c.text('Inspector', .title, ui.text_primary)
+	e.inspector(mut c, mut srv)
 	c.close()
 	c.close()
 }
