@@ -622,9 +622,9 @@ fn (mut c Context) touch(id u32) int {
 	return h
 }
 
-// Bu karede k tuşu basıldı mı. Açık menü (kb_menu) Enter/Space/Esc/Ok tuşlarını sahiplenir: diğer widget'lar bunları görmez.
+// Bu karede k tuşu basıldı mı. Açık menü (kb_menu) Tab/Enter/Space/Esc/Ok tuşlarını sahiplenir: diğer widget'lar bunları görmez.
 fn (c &Context) key_pressed(k Key) bool {
-	if c.kb_menu && (k == .enter || k == .space || k == .escape || k == .up || k == .down) {
+	if c.kb_menu && (k == .enter || k == .space || k == .escape || k == .up || k == .down || k == .tab) {
 		return false
 	}
 	return c.raw_key(k)

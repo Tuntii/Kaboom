@@ -1251,9 +1251,148 @@ fn test_open_menu_blocks_focused_button_enter() {
 	wgt_frame(mut c, timed(press_at(10, 42), 1000), body)
 	wgt_frame(mut c, timed(release_at(10, 42), 1000), body)
 	assert t.open
-	// Odak düğmeye geçer (menü açıkken Tab), sonra Enter: düğme tetiklenmez.
-	wgt_frame(mut c, timed(menu_key_at(.tab, 1200), 1200), body)
+	// Odak düğmede (kare dışı odak ataması); menü açıkken Enter düğmeyi tetiklemez.
+	c.focus = c.id('arka')
+	c.focus_visible = true
 	wgt_frame(mut c, timed(menu_key_at(.enter, 1300), 1300), body)
 	assert clicks == 0
 	assert t.open
+}
+
+// Menü açıkken Tab odağı menünün arkasına taşımaz: menü sekmeyi sahiplenir.
+fn test_open_menu_tab_does_not_leave_menu() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		c.button('arka', .secondary)
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			c.menu_item('bir')
+			c.menu_end()
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(press_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(release_at(10, 42), 1000), body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.tab, 1200), 1200), body)
+	assert c.focused_id() == 0
+	assert t.open
+}
+
+struct KbFieldProbe {
+mut:
+	v    f32
+	sel  int
+	open bool
+}
+
+// Düzenleme durumundaki sayı alanı (odak atanır: fare basışı odağı ve düzenlemeyi bırakır) ve açık menü.
+// Aşağı ile ilk öğe vurgulanır; sonraki tuşlar menü ya da alana gider.
+fn kb_field_body(mut tp &KbFieldProbe) fn (mut c Context) {
+	return fn [mut tp] (mut c Context) {
+		c.number_field('n', mut &tp.v, '', 2, 0.1, 0, 0)
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			if c.menu_item('bir') {
+				tp.sel = 1
+			}
+			c.menu_end()
+		}
+	}
+}
+
+fn kb_field_setup(mut c Context, body fn (mut c Context)) {
+	wgt_frame(mut c, timed(mouse_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(press_at(10, 42), 1000), body)
+	wgt_frame(mut c, timed(release_at(10, 42), 1000), body)
+	c.focus = c.id('n')
+	c.focus_visible = false
+	c.begin_num(c.id('n'), 5, 2)
+}
+
+// Düzenlenen alanın üzerinde menü açıkken Enter: menü öğesi seçilir, alan onaylanmaz ve düzenleme sürer.
+fn test_open_menu_enter_does_not_commit_field() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := KbFieldProbe{v: 5}
+	mut tp := &t
+	body := kb_field_body(mut tp)
+	kb_field_setup(mut c, body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.down, 1200), 1200), body)
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1300), 1300), body)
+	assert t.sel == 1
+	wgt_frame(mut c, timed(mouse_at(300, 200), 1400), body)
+	assert !t.open
+	assert t.v == 5
+	assert c.num_id == c.id('n')
+}
+
+// Düzenlenen alanın üzerinde menü açıkken Esc: menü kapanır, alan metni ve düzenleme değişmez.
+fn test_open_menu_esc_keeps_field_editing() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := KbFieldProbe{v: 5}
+	mut tp := &t
+	body := kb_field_body(mut tp)
+	kb_field_setup(mut c, body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.escape, 1200), 1200), body)
+	assert !t.open
+	assert t.v == 5
+	assert c.num_id == c.id('n')
+	assert c.num_buf.str() == '5.00'
+}
+
+// Menü bir karede açık çizilip sonraki karede hiç çizilmezse, ondan sonraki kare klavyeyi geri alır.
+// Kareler elle sürülür (wgt_frame ara kare ekler ve durumu temizlerdi).
+fn test_menu_gone_releases_keyboard_next_frame() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	mut clicks := 0
+	mut cp := &clicks
+	with_menu := fn [mut tp, mut cp] (mut c Context) {
+		if c.button('arka', .secondary) {
+			unsafe {
+				*cp = *cp + 1
+			}
+		}
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			c.menu_end()
+		}
+	}
+	without_menu := fn [mut cp] (mut c Context) {
+		if c.button('arka', .secondary) {
+			unsafe {
+				*cp = *cp + 1
+			}
+		}
+	}
+	c.begin(timed(mouse_at(10, 42), 1000), 400, 300, 1.0)
+	with_menu(mut c)
+	c.end()
+	c.begin(timed(press_at(10, 42), 1000), 400, 300, 1.0)
+	with_menu(mut c)
+	c.end()
+	c.begin(timed(release_at(10, 42), 1000), 400, 300, 1.0)
+	with_menu(mut c)
+	c.end()
+	assert t.open
+	c.focus = c.id('arka')
+	c.focus_visible = true
+	// Menü çizilmeyen kare (F+1): kare tuşları bu karede menüye ait sayılır (bir kare gecikme), düğme ateşlenmez.
+	c.begin(Input{}, 400, 300, 1.0)
+	without_menu(mut c)
+	c.end()
+	// F+2: menü yok, Enter düğmeye gider.
+	c.begin(menu_key_at(.enter, 1200), 400, 300, 1.0)
+	without_menu(mut c)
+	c.end()
+	assert clicks == 1
 }

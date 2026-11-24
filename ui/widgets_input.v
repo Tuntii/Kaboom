@@ -226,7 +226,8 @@ mut:
 }
 
 // Karakter ve tuşları tampona uygular; imleç bayt konumu kod noktası sınırında kalır.
-fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
+// menu: açık menü klavyeyi sahiplenir; alan Enter/Esc ve yazılan karakterleri görmez (kb_menu).
+fn edit_keys(mut buf TextBuf, cur0 int, inp Input, menu bool) (EditOut, int) {
 	mut out := EditOut{}
 	mut cur := cur0
 	if cur > buf.len {
@@ -234,7 +235,7 @@ fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
 	}
 	for i in 0 .. inp.char_count {
 		cp := inp.chars[i]
-		if cp < 32 || cp == 127 {
+		if menu || cp < 32 || cp == 127 {
 			continue
 		}
 		ok, nc := buf.insert(cur, cp)
@@ -246,6 +247,9 @@ fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
 	for i in 0 .. inp.key_count {
 		// Otomatik tekrar yalnızca düzenleme tuşlarında (ok, Backspace, Delete, Home, End) etkili.
 		if inp.key_repeat[i] && (inp.keys[i] == .enter || inp.keys[i] == .escape) {
+			continue
+		}
+		if menu && (inp.keys[i] == .enter || inp.keys[i] == .escape) {
 			continue
 		}
 		match inp.keys[i] {
@@ -293,9 +297,9 @@ fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
 }
 
 // Metni değiştiren girdi var mı (yazılabilir karakter, Backspace, Delete).
-fn edit_hits(inp Input) bool {
+fn edit_hits(inp Input, menu bool) bool {
 	for i in 0 .. inp.char_count {
-		if inp.chars[i] >= 32 && inp.chars[i] != 127 {
+		if !menu && inp.chars[i] >= 32 && inp.chars[i] != 127 {
 			return true
 		}
 	}
@@ -376,7 +380,7 @@ pub fn (mut c Context) text_field(label string, mut buf TextBuf, width f32) bool
 	}
 	mut enter := false
 	if it.focused {
-		r, nc := edit_keys(mut buf, c.txt_cur, c.inp)
+		r, nc := edit_keys(mut buf, c.txt_cur, c.inp, c.kb_menu)
 		c.txt_cur = nc
 		enter = r.enter
 		if r.esc {
@@ -500,12 +504,12 @@ pub fn (mut c Context) number_field_ex(label string, mut value &f32, o NumberFie
 		c.begin_num(id, cur, o.decimals)
 	}
 	if editing {
-		if c.num_fresh && edit_hits(c.inp) {
+		if c.num_fresh && edit_hits(c.inp, c.kb_menu) {
 			c.num_buf.len = 0
 			c.num_cur = 0
 			c.num_fresh = false
 		}
-		e, nc := edit_keys(mut c.num_buf, c.num_cur, c.inp)
+		e, nc := edit_keys(mut c.num_buf, c.num_cur, c.inp, c.kb_menu)
 		c.num_cur = nc
 		// Enter, Esc ya da odak kaybı düzenlemeyi bitirir; Esc değeri değiştirmez.
 		if e.enter || !it.focused {
