@@ -15,4 +15,3 @@ fn C.stbtt_FindGlyphIndex(info &C.stbtt_fontinfo, codepoint int) int
 fn C.stbtt_GetGlyphHMetrics(info &C.stbtt_fontinfo, glyph int, advance &int, lsb &int)
 fn C.stbtt_GetGlyphBitmapBox(info &C.stbtt_fontinfo, glyph int, sx f32, sy f32, x0 &int, y0 &int, x1 &int, y1 &int)
 fn C.stbtt_MakeGlyphBitmap(info &C.stbtt_fontinfo, output &u8, out_w int, out_h int, out_stride int, sx f32, sy f32, glyph int)
-fn C.stbtt_GetGlyphKernAdvance(info &C.stbtt_fontinfo, glyph1 int, glyph2 int) int

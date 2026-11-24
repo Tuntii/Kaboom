@@ -43,6 +43,7 @@ mut:
 	white_v f32
 	metrics [roles_n]RoleMetrics
 	infos   [3][stbtt_info_size]u8
+	kerns   [3][]KernPair // yüz başına sıralı çift tablosu (charset indeksleri)
 }
 
 pub fn Atlas.build(scale f32) !Atlas {
@@ -57,13 +58,17 @@ pub fn Atlas.build(scale f32) !Atlas {
 		cps:    cps
 		glyphs: []Glyph{len: roles_n * n}
 	}
+	mut faces := [][]u8{}
 	for face in [FontFace.sans, .sans_medium, .mono] {
-		data := face_font(face)
-		if C.stbtt_InitFont(info_of(&a.infos[int(face)]), data, 0) == 0 {
+		data := face_bytes(face)
+		faces << data
+		if C.stbtt_InitFont(info_of(&a.infos[int(face)]), unsafe { &u8(data.data) }, 0) == 0 {
 			return error('atlas: font okunamadı')
 		}
 	}
 	mut gid := []int{len: roles_n * n}
+	// Eksik glifler '?' ile aynı atlas konumunu paylaşır; kendi yuvasını almaz.
+	mut missing := []bool{len: roles_n * n}
 	for r, role in roles {
 		face, size := role.spec()
 		info := info_of(&a.infos[int(face)])
@@ -79,7 +84,11 @@ pub fn Atlas.build(scale f32) !Atlas {
 			line: f32(asc - desc + gap) * fsc / scale
 		}
 		for ci, cp in cps {
-			g := C.stbtt_FindGlyphIndex(info, int(cp))
+			mut g := C.stbtt_FindGlyphIndex(info, int(cp))
+			if g == 0 {
+				g = C.stbtt_FindGlyphIndex(info, 0x3F)
+				missing[r * n + ci] = true
+			}
 			mut adv := 0
 			mut lsb := 0
 			C.stbtt_GetGlyphHMetrics(info, g, &adv, &lsb)
@@ -98,11 +107,24 @@ pub fn Atlas.build(scale f32) !Atlas {
 			gid[r * n + ci] = g
 		}
 	}
+	// Kerning yalnızca gerçek glif kimlikleriyle; eksik glifler (0) atlanır.
+	for face in [FontFace.sans, .sans_medium, .mono] {
+		info := info_of(&a.infos[int(face)])
+		mut gids := []int{len: n}
+		for ci, cp in cps {
+			gids[ci] = C.stbtt_FindGlyphIndex(info, int(cp))
+		}
+		a.kerns[int(face)] = gpos_kern_table(faces[int(face)], gids)
+	}
 	isz := int(math.round(f64(icon_size * scale)))
 	mut dims := [][2]int{cap: 1 + roles_n * n + icon_n}
 	dims << [1, 1]!
-	for g in a.glyphs {
-		dims << [int(g.x1 - g.x0), int(g.y1 - g.y0)]!
+	for idx, g in a.glyphs {
+		if missing[idx] {
+			dims << [0, 0]!
+		} else {
+			dims << [int(g.x1 - g.x0), int(g.y1 - g.y0)]!
+		}
 	}
 	for _ in 0 .. icon_n {
 		dims << [isz, isz]!
@@ -120,7 +142,7 @@ pub fn Atlas.build(scale f32) !Atlas {
 			g := a.glyphs[idx]
 			w := int(g.x1 - g.x0)
 			h := int(g.y1 - g.y0)
-			if w == 0 || h == 0 {
+			if missing[idx] || w == 0 || h == 0 {
 				continue
 			}
 			p := pos[idx + 1]
@@ -133,7 +155,18 @@ pub fn Atlas.build(scale f32) !Atlas {
 	}
 	fs := f32(side)
 	for idx in 0 .. roles_n * n {
-		a.glyphs[idx] = with_uv(a.glyphs[idx], pos[idx + 1], fs)
+		if !missing[idx] {
+			a.glyphs[idx] = with_uv(a.glyphs[idx], pos[idx + 1], fs)
+		}
+	}
+	// '?' charset'in ilk aralığında (U+0020 başlangıçlı): indeks 0x3F - 0x20.
+	qi := 0x3F - 0x20
+	for r in 0 .. roles_n {
+		for ci in 0 .. n {
+			if missing[r * n + ci] {
+				a.glyphs[r * n + ci] = a.glyphs[r * n + qi]
+			}
+		}
 	}
 	for i in 0 .. icon_n {
 		p := pos[1 + roles_n * n + i]
@@ -201,18 +234,18 @@ fn info_of(buf &[stbtt_info_size]u8) &C.stbtt_fontinfo {
 	return unsafe { &C.stbtt_fontinfo(buf) }
 }
 
-// Gömülü font baytları; ikiliden okunur, çalışma zamanında dosya yolu yoktur.
-fn face_font(face FontFace) &u8 {
+// Gömülü font baytları; ikiliden okunur (kopyasız), çalışma zamanında dosya yolu yoktur.
+fn face_bytes(face FontFace) []u8 {
 	if face == .sans {
 		mut f := $embed_file('../assets/fonts/Inter-Regular.ttf')
-		return f.data()
+		return unsafe { (&u8(f.data())).vbytes(f.len) }
 	}
 	if face == .sans_medium {
 		mut f := $embed_file('../assets/fonts/Inter-Medium.ttf')
-		return f.data()
+		return unsafe { (&u8(f.data())).vbytes(f.len) }
 	}
 	mut f := $embed_file('../assets/fonts/JetBrainsMono-Regular.ttf')
-	return f.data()
+	return unsafe { (&u8(f.data())).vbytes(f.len) }
 }
 
 // Karakter kümesi, sıralı; U+0020–U+007E, U+00A0–U+017F ve ek noktalama/oklar.
@@ -244,6 +277,11 @@ pub fn (a &Atlas) scale() f32 {
 	return a.sc
 }
 
+// Atlasta bulunan glif var mı (yüz başına; eksik glif '?' ile çizilir).
+pub fn (a &Atlas) has_glyph(face FontFace, cp u32) bool {
+	return C.stbtt_FindGlyphIndex(info_of(&a.infos[int(face)]), int(cp)) != 0
+}
+
 fn (a &Atlas) index_of(cp u32) int {
 	mut lo := 0
 	mut hi := a.cps.len
@@ -261,12 +299,17 @@ fn (a &Atlas) index_of(cp u32) int {
 	return -1
 }
 
-pub fn (a &Atlas) glyph(role TextRole, cp u32) Glyph {
-	mut i := a.index_of(cp)
+// Atlasta olmayan kod noktası için '?' indeksi.
+fn (a &Atlas) index_or_fallback(cp u32) int {
+	i := a.index_of(cp)
 	if i < 0 {
-		i = a.index_of(u32(0x3F))
+		return a.index_of(u32(0x3F))
 	}
-	return a.glyphs[int(role) * a.cps.len + i]
+	return i
+}
+
+pub fn (a &Atlas) glyph(role TextRole, cp u32) Glyph {
+	return a.glyphs[int(role) * a.cps.len + a.index_or_fallback(cp)]
 }
 
 pub fn (a &Atlas) icon(i Icon) Glyph {
@@ -302,13 +345,25 @@ pub fn (a &Atlas) ascent(role TextRole) f32 {
 	return a.metrics[int(role)].asc
 }
 
-// Fiziksel piksel.
+// Fiziksel piksel; GPOS çifti tablosunda ikili arama, tahsis yok.
 pub fn (a &Atlas) kern(role TextRole, prev u32, cp u32) f32 {
 	face, _ := role.spec()
-	info := info_of(&a.infos[int(face)])
-	g1 := C.stbtt_FindGlyphIndex(info, int(prev))
-	g2 := C.stbtt_FindGlyphIndex(info, int(cp))
-	return f32(C.stbtt_GetGlyphKernAdvance(info, g1, g2)) * a.metrics[int(role)].fsc
+	tab := a.kerns[int(face)]
+	key := u32(a.index_or_fallback(prev)) << 16 | u32(a.index_or_fallback(cp))
+	mut lo := 0
+	mut hi := tab.len
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if tab[mid].key < key {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo < tab.len && tab[lo].key == key {
+		return f32(tab[lo].val) * a.metrics[int(role)].fsc
+	}
+	return 0
 }
 
 // Kod noktası ve sonraki bayt indeksi; geçersiz dizi U+FFFD, 1 bayt ilerler.

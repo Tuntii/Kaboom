@@ -31,9 +31,37 @@ fn test_turkish_glyphs_present() {
 	a := must_atlas(1.0)
 	q := a.glyph(.body, u32(0x3F))
 	for cp in [u32(0x11F), 0x15F, 0x131, 0x130, 0x11E, 0x15E, 0xE7, 0xF6, 0xFC] {
+		assert a.has_glyph(.sans, cp)
 		g := a.glyph(.body, cp)
+		assert g.x1 > g.x0 && g.y1 > g.y0
 		assert g.u0 != q.u0 || g.v0 != q.v0
 	}
+}
+
+// Font eksik glif verirse (glif kimliği 0) atlas '?' çizer, .notdef değil.
+fn test_face_missing_glyph_maps_to_fallback() {
+	a := must_atlas(1.0)
+	q := a.glyph(.mono, u32(0x3F))
+	mut missing := 0
+	for cp in a.cps {
+		if !a.has_glyph(.mono, cp) {
+			missing++
+			assert a.glyph(.mono, cp) == q
+		}
+	}
+	assert missing > 0
+}
+
+fn test_kern_inter_pairs() {
+	a := must_atlas(1.0)
+	assert a.kern(.body, u32(0x54), 0x6F) < 0 // To
+	assert a.kern(.body, u32(0x41), 0x56) < 0 // AV
+	assert a.kern(.body, u32(0x61), 0x61) == 0 // aa
+}
+
+fn test_measure_kerns_pair() {
+	a := must_atlas(1.0)
+	assert a.measure('To', .body) < a.measure('T', .body) + a.measure('o', .body)
 }
 
 fn test_missing_glyph_falls_back() {
