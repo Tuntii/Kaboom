@@ -40,6 +40,8 @@ fn C.vcore_cj_install()
 fn C.vcore_cj_child(item &C.cJSON) &C.cJSON
 fn C.vcore_cj_next(item &C.cJSON) &C.cJSON
 fn C.vcore_cj_key(item &C.cJSON) &char
+fn C.vcore_cj_switch(base &u8, cap u64, off u64) u64
+fn C.vcore_cj_set_num(item &C.cJSON, x f64)
 fn C.strlen(s &char) u64
 
 // Arena'da yaşayan C metninin görünümü. cstring_to_vstring kopyalar (her anahtar ve değerde tahsis);
@@ -275,6 +277,16 @@ pub fn exhausted() bool {
 pub fn arena_set(base &u8, cap u64) {
 	C.vcore_cj_set(base, cap)
 	C.vcore_cj_install()
+}
+
+// Ayrıştırma bölgesine geçer ya da geri döner: yeni bölge off'tan devam eder, eski bölgenin sayacı döner.
+pub fn arena_switch(base &u8, cap u64, off u64) u64 {
+	return C.vcore_cj_switch(base, cap, off)
+}
+
+// Sayı düğümünün değerini değiştirir; bellek ayırmaz.
+pub fn (v Val) set_num(x f64) {
+	C.vcore_cj_set_num(v.n, x)
 }
 
 // Her handle çağrısının başında: önceki yanıt ve düğümler geri alınır.

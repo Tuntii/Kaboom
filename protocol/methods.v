@@ -145,27 +145,42 @@ const command_docs = [
 
 fn (mut s Server) entity_spawn(p Val) !Val {
 	comps := object_param(p, 'components')!
-	mut plans := []Plan{}
+	plans := s.component_plans(comps, false)!
 	defer {
 		free_plans(plans)
+	}
+	e := s.spawn_planned(plans)!
+	return kv('entity', num(f64(u64(e))))
+}
+
+// Bir varlığın bileşen nesnesinden planları üretir (entity.spawn ve scene.load ortak yolu); dünyaya dokunmaz.
+// Yinelenen anahtarda yalnız son değer geçerlidir. scene: .vscene değerleri kabul edilir.
+fn (s &Server) component_plans(comps Val, scene bool) ![]Plan {
+	mut plans := []Plan{}
+	mut ok := false
+	defer {
+		if !ok {
+			free_plans(plans)
+		}
 	}
 	mut c := comps.first()
 	for !c.is_nil() {
 		name := c.key()
-		// Yinelenen anahtarda yalnız son değer geçerlidir (eski nesne eşlemesi gibi).
 		if comps.is_last(c) {
 			if !c.is_object() {
-				return invalid_params('components.${name} must be an object of field values')
+				d := hint_data('components.${name} must be an object of field values')
+				d.set('component', str_val(name))
+				return rpc_error(code_invalid_params, 'invalid params', d)
 			}
-			mut pl := s.plan_component(name, c, false)!
+			mut pl := s.plan_component(name, c, scene)!
 			s.seed_transform_prev(mut pl)
 			plans << pl
 		}
 		c = c.next()
 	}
 	s.check_queue_slots(plans)!
-	e := s.spawn_planned(plans)!
-	return kv('entity', num(f64(u64(e))))
+	ok = true
+	return plans
 }
 
 // Spawn bir komut, her bileşen bir add, her alan bir set: hepsi kuyrukta sığmalı.
@@ -295,7 +310,7 @@ fn (mut s Server) component_set(p Val) !Val {
 	schema := s.reg.component(comp) or {
 		return status_error(.unknown_component, kv('component', str_val(name)))
 	}
-	w := s.field_write(name, schema, fname, v)!
+	w := s.field_write(name, schema, fname, v, false)!
 	s.commit_one(cmd.Command{
 		kind:   .set_field
 		source: s.source
@@ -563,26 +578,43 @@ fn (s &Server) scene_save(p Val) !Val {
 }
 
 // .vscene dosyasını yükler: önce tamamen doğrular, sonra dünyayı sıfırlayıp komutlarla kurar.
-// Doğrulama dünyaya dokunmaz; kurulum yalnız doğrulamadan sonra başlar.
+// Ayrıştırma ve doğrulama dosya boyutuna göre ayrılan kendi arenasında yapılır; istek arenası sonuç dizisini tutar.
+// Sonuç dizisi dünya sıfırlanmadan önce kurulur: sıfırlamadan sonra yetmezlik olmaz.
 fn (mut s Server) scene_load(p Val) !Val {
 	path := string_param(p, 'path')!
 	text := load_scene_text(path) or {
 		return io_error(path, 'could not read file; check that the path exists and is readable, then retry scene.load')
 	}
-	doc := parse(text) or {
-		if exhausted() {
-			return invalid_params('scene file does not fit the request arena; start the server with a larger capacity')
-		}
-		return invalid_params('file is not valid JSON; check the file or save it again with scene.save')
+	req_off := arena_used()
+	need := scene_arena_bytes(text.len)
+	region := memory.reserve(need) or {
+		return internal_error('scene.load could not reserve ${need} bytes for parsing; free memory and retry')
 	}
-	ents := s.scene_validate(doc)!
+	defer {
+		_ = memory.release(region)
+	}
+	_ = arena_switch(region, need, 0)
+	ents := s.scene_parse(text) or {
+		_ = arena_switch(s.req_region, request_arena_bytes(s.cfg), req_off)
+		return rehome(err)
+	}
+	// Bundan sonra istek arenası etkin; ayrıştırma bölgesi yalnız okunur (release'e kadar yaşar).
+	_ = arena_switch(s.req_region, request_arena_bytes(s.cfg), req_off)
+	n := ents.len()
+	out := arr()
+	for _ in 0 .. n {
+		out.push(num(0))
+	}
+	if exhausted() {
+		return invalid_params('scene has ${n} entities and the response does not fit the request arena; start the server with a larger capacity')
+	}
 	if s.engine.recorder.is_active() {
 		return record_error('a recording is active; call record.stop before scene.load')
 	}
 	// Dünya sıfırlanır: tick 0, boş geçmiş ve editor_depth 0 (sim.reset ile aynı iç yol).
 	_ = s.sim_reset()!
-	out := arr()
-	for i in 0 .. ents.len() {
+	mut node := out.first()
+	for i in 0 .. n {
 		ent := ents.at(i) or { break }
 		plans := s.scene_entity_plans(ent, i)!
 		e := s.spawn_planned(plans) or {
@@ -590,13 +622,40 @@ fn (mut s Server) scene_load(p Val) !Val {
 			return err
 		}
 		free_plans(plans)
-		out.push(num(f64(u64(e))))
+		// Yer tutucu düğüm değerini yerinde değiştirir: bellek ayırmaz, yani yanıt arenası yetmezliği olmaz.
+		node.set_num(f64(u64(e)))
+		node = node.next()
 	}
 	// Kurulum komutları geçmişe yazılmış olabilir: yüklenen sahne tek geri alma adımı değildir.
 	s.engine.history.clear()
 	res := obj()
 	res.set('entities', out)
 	return res
+}
+
+// Ayrıştırma bölgesi boyutu: cJSON düğümleri ve anahtarları metinden birkaç kat büyüktür; 32 kat ve 1 MiB taban yeter.
+fn scene_arena_bytes(text_len int) u64 {
+	return u64(text_len) * 32 + u64(1) << 20
+}
+
+// Metni ayrıştırır ve tamamen doğrular; dünyaya dokunmaz. Döner: varlık dizisi (ayrıştırma bölgesinde).
+fn (s &Server) scene_parse(text string) !Val {
+	doc := parse(text) or {
+		if exhausted() {
+			return invalid_params('scene file is too large to parse; split it or start the server with a larger capacity')
+		}
+		return invalid_params('file is not valid JSON; check the file or save it again with scene.save')
+	}
+	return s.scene_validate(doc)
+}
+
+// Hatayı istek arenasına taşır: ayrıştırma bölgesi serbest bırakılınca eski düğümler geçersiz olur.
+// Çağıran istek arenasını etkinleştirmiş olmalıdır.
+fn rehome(err IError) IError {
+	if err is RpcError {
+		return rpc_error(err.err_code, err.message, dup(err.data))
+	}
+	return err
 }
 
 // Belgeyi doğrular ve varlık dizisini döner; dünyaya dokunmaz.
@@ -627,65 +686,25 @@ fn (s &Server) scene_validate(doc Val) !Val {
 	return ents
 }
 
-// Tek varlığın planları; dünyaya dokunmaz. Hata, varlık indeksini ve (varsa) bileşen adını taşır.
+// Tek varlığın planları; dünyaya dokunmaz. Hata, varlık indeksini taşır.
 fn (s &Server) scene_entity_plans(ent Val, index int) ![]Plan {
 	comps := ent.get('components') or {
-		return scene_error(index, '', invalid_params('components is required: an object of component values'))
+		return scene_error(index, invalid_params('components is required: an object of component values'))
 	}
 	if !comps.is_object() {
-		return scene_error(index, '', invalid_params('components must be an object of component values'))
+		return scene_error(index, invalid_params('components must be an object of component values'))
 	}
-	mut plans := []Plan{}
-	mut ok := false
-	defer {
-		if !ok {
-			free_plans(plans)
-		}
-	}
-	mut c := comps.first()
-	for !c.is_nil() {
-		name := c.key()
-		// Yinelenen anahtarda yalnız son değer geçerlidir (plan_component ile aynı).
-		if comps.is_last(c) {
-			if !c.is_object() {
-				return scene_error(index, name, invalid_params('components.${name} must be an object of field values'))
-			}
-			mut pl := s.plan_component(name, c, true) or { return scene_error(index, name, err) }
-			s.seed_transform_prev(mut pl)
-			plans << pl
-		}
-		c = c.next()
-	}
-	s.check_queue_slots(plans) or { return scene_error(index, '', err) }
-	ok = true
-	return plans
+	return s.component_plans(comps, true) or { return scene_error(index, err) }
 }
 
-// Varlık indeksini hata verisine ekler; bileşen adı yoksa onu da ekler (yapısal hatalar için).
-fn scene_error(index int, name string, err IError) IError {
+// Varlık indeksini hata verisine ekler.
+fn scene_error(index int, err IError) IError {
 	if err is RpcError {
 		d := err.data
 		d.set('entity_index', num(f64(index)))
-		if d.get('component') == none && name != '' {
-			d.set('component', str_val(name))
-		}
 		return rpc_error(err.err_code, err.message, d)
 	}
 	return err
-}
-
-// .vscene'de sonsuz ve NaN değerler metin olarak yazılır. "nan" sayıya çevrilir (f32 NaN olarak geçer);
-// "inf" ve "-inf" sonludan başka olduğu için sayıya çevrilince field_write reddeder.
-fn scene_value(v Val) Val {
-	if !v.is_string() {
-		return v
-	}
-	return match v.str() {
-		'nan' { num(math.nan()) }
-		'inf' { num(math.inf(1)) }
-		'-inf' { num(math.inf(-1)) }
-		else { v }
-	}
 }
 
 // Bileşen adini kayit id'sine çevirir; yoksa 1002.
@@ -710,8 +729,7 @@ fn (s &Server) plan_component(name string, values Val, scene_values bool) !Plan 
 	mut c := values.first()
 	for !c.is_nil() {
 		if values.is_last(c) {
-			v := if scene_values { scene_value(c) } else { c }
-			writes << s.field_write(name, schema, c.key(), v)!
+			writes << s.field_write(name, schema, c.key(), c, scene_values)!
 		}
 		c = c.next()
 	}
@@ -748,7 +766,9 @@ fn (s &Server) seed_transform_prev(mut pl Plan) {
 }
 
 // Tek bir alan yazımını doğrular: alan adı, readonly, tip, aralık.
-fn (s &Server) field_write(name string, schema ecs.ComponentSchema, fname string, v Val) !FieldWrite {
+// scene: .vscene değerleri. Metin olarak yazılan "inf", "-inf", "nan" yalnız varsayılan aralıklı alanda kabul edilir;
+// açık aralıklı alanda sonlu olmayan her değer reddedilir (NaN karşılaştırmaları aralığı geçtiği için ayrıca denetlenir).
+fn (s &Server) field_write(name string, schema ecs.ComponentSchema, fname string, v Val, scene bool) !FieldWrite {
 	fi := schema.field_index(fname) or {
 		return status_error(.unknown_field, component_field_ref(name, fname))
 	}
@@ -762,17 +782,51 @@ fn (s &Server) field_write(name string, schema ecs.ComponentSchema, fname string
 	if f.typ != .f32_ {
 		return invalid_params('field ${name}.${fname} has type ${f.typ.name()}, only f32 is supported over JSON')
 	}
+	if scene && v.is_string() {
+		special := scene_nonfinite(v) or { return invalid_params('${name}.${fname} must be a finite number') }
+		if f.ranged {
+			return range_error(name, fname, f)
+		}
+		return FieldWrite{
+			field: u16(fi)
+			bits:  u64(math.f32_bits(f32(special)))
+		}
+	}
 	bits := f32_bits(v) or { return invalid_params('${name}.${fname} must be a finite number') }
 	x := v.f64()
+	if f.ranged && x != x {
+		return range_error(name, fname, f)
+	}
 	if x < f.min || x > f.max {
-		d := component_field_ref(name, fname)
-		d.set('hint', str_val('${name}.${fname} must be in [${range_text(f.min)}, ${range_text(f.max)}]'))
-		return rpc_error(code_invalid_params, 'invalid params', d)
+		return range_error(name, fname, f)
 	}
 	return FieldWrite{
 		field: u16(fi)
 		bits:  bits
 	}
+}
+
+fn range_error(name string, fname string, f ecs.FieldSchema) RpcError {
+	d := component_field_ref(name, fname)
+	d.set('hint', str_val('${name}.${fname} must be in [${range_text(f.min)}, ${range_text(f.max)}]'))
+	return rpc_error(code_invalid_params, 'invalid params', d)
+}
+
+// .vscene'de sonsuz ve NaN değerler metin olarak yazılır; üç bilinen metin f64'e çevrilir.
+fn scene_nonfinite(v Val) ?f64 {
+	if !v.is_string() {
+		return none
+	}
+	if v.str() == 'nan' {
+		return math.nan()
+	}
+	if v.str() == 'inf' {
+		return math.inf(1)
+	}
+	if v.str() == '-inf' {
+		return math.inf(-1)
+	}
+	return none
 }
 
 // Komutları kuyruğa koyar ve tek flush ile uygular. Sonuçların ilk ok olmayanı hata olur.

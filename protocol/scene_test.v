@@ -341,6 +341,79 @@ fn test_load_accepts_bom_and_crlf() {
 	assert scene_text(s.world(), s.registry()).contains('"x":2')
 }
 
+fn test_component_set_rejects_nan_in_explicit_range() {
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	spawn_one(mut s)
+	reply := scene_call(mut s, '{"jsonrpc":"2.0","id":2,"method":"component.set","params":{"entity":0,"component":"Sprite","field":"r","value":"nan"}}')
+	assert error_code(reply) == -32602
+}
+
+fn test_load_rejects_nan_in_explicit_range_world_untouched() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	spawn_one(mut s)
+	before := s.engine.state_hash()
+	path := write_scene_file('nan_range.vscene', '{"format":"vscene","version":1,"entities":[{"components":{"Sprite":{"r":"nan"}}}]}')
+	assert error_code(load_reply(mut s, path)) == -32602
+	assert s.engine.state_hash() == before
+}
+
+fn test_load_nonfinite_default_range_roundtrip_byte_equal() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	path := write_scene_file('nonfinite.vscene', '{"format":"vscene","version":1,"entities":[{"components":{"Transform":{"x":"inf","y":0}}},{"components":{"Transform":{"x":"-inf","y":1}}},{"components":{"Transform":{"x":"nan","y":2}}}]}')
+	reply := load_reply(mut s, path)
+	assert pick(scene_result(reply), 'entities').len() == 3
+	first := scene_text(s.world(), s.registry())
+	path2 := write_scene_file('nonfinite2.vscene', first)
+	load_reply(mut s, path2)
+	assert scene_text(s.world(), s.registry()) == first
+}
+
+// Tam kapasitede sahne: ayrıştırma arenası dosya boyutuna göre ayrılır, istek arenası yetmez.
+fn test_full_capacity_scene_roundtrip_byte_equal() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	n := 20000
+	mut s := Server.new(sim.Config{ capacity: u32(n), queue_capacity: 64, record_capacity: 1024 }) or {
+		panic(err)
+	}
+	defer {
+		s.close()
+	}
+	mut ents := []string{}
+	for i in 0 .. n {
+		ents << '{"components":{"Transform":{"x":${i}.25,"y":-${i % 97}},"Sprite":{"size":1,"r":0.5,"g":0,"b":1}}}'
+	}
+	path := write_scene_file('full.vscene', '{"format":"vscene","version":1,"capacity":${n},"entities":[${ents.join(',\n')}]}')
+	reply := load_reply(mut s, path)
+	assert pick(scene_result(reply), 'entities').len() == n
+	first := scene_text(s.world(), s.registry())
+	path2 := write_scene_file('full2.vscene', first)
+	load_reply(mut s, path2)
+	assert scene_text(s.world(), s.registry()) == first
+}
+
 // server_test.v'deki yardımcılar bu dosyada görünmez: aynı işi burada yapar.
 fn scene_call(mut s Server, line string) Val {
 	out := s.handle(line) or { panic('yanıt yok: ${line}') }

@@ -47,6 +47,21 @@ int vcore_cj_exhausted(void) {
 	return vcore_cj_failed;
 }
 
+// Bölge değiştirir ve sayacı off'a koyar; eski bölgenin kullanılan bayt sayısını döndürür (geri dönüş için).
+unsigned long long vcore_cj_switch(unsigned char *base, unsigned long long cap, unsigned long long off) {
+	unsigned long long old = vcore_cj_off;
+	vcore_cj_base = base;
+	vcore_cj_cap = cap;
+	vcore_cj_off = off;
+	vcore_cj_failed = 0;
+	return old;
+}
+
+// Sayı düğümünün değerini yerinde değiştirir; bellek ayırmaz (önceden kurulmuş dizi yer tutucuları için).
+void vcore_cj_set_num(cJSON *item, double x) {
+	cJSON_SetNumberValue(item, x);
+}
+
 void vcore_cj_install(void) {
 	cJSON_Hooks h;
 	h.malloc_fn = vcore_cj_malloc;
