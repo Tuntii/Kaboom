@@ -42,6 +42,18 @@ mut:
 	err_len    int
 	note       [status_cap]u8 // durum çubuğu bildirimi (ör. taşmada Esc); bir sonraki sürüklemede temizlenir
 	note_len   int
+	file_field FileField  // yol alanı: kapalı, kayıt ya da aç
+	field      ui.TextBuf // yol alanının metni
+	target     ui.TextBuf // şerit onayından sonra yüklenecek yol
+	confirm    Confirm    // kaydedilmemiş değişiklik şeridi (idle: gizli)
+	focus_next bool       // yol alanı yeni açıldı: bu karede odak verilir
+	saved_count u64       // son kayıt ya da yüklemedeki değişiklik sayacı (change_count)
+	close_asked bool      // pencere kapatma isteği (request_close), bu karede işlenir
+	closing     bool      // kapanış onaylandı: cmd_main döngüyü bitirir
+	now_ms     f64        // son karenin girdi zamanı (hata iletisi süresi)
+	flash      [status_cap]u8
+	flash_len  int
+	flash_until f64
 }
 
 // Yeni editör: panel genişlikleri 240/300, kamera 0,0 görünüm yüksekliği 40, seçim yok.
@@ -80,7 +92,9 @@ fn (mut e Editor) load_scene(mut srv protocol.Server) {
 	}
 	if !protocol.response_ok(resp) {
 		e.set_load_error(protocol.response_error_message(resp))
+		return
 	}
+	e.saved_count = srv.change_count()
 }
 
 // Hata satırı (kırmızı durum metni): yüklemeden bağımsız kurulum hataları da buradan gösterilir.
@@ -128,7 +142,14 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 		}
 	}
 	e.measure(c.input().time_ms)
+	e.now_ms = c.input().time_ms
+	// Araç çubuğu (geri al/yinele, dosya alanı) gövdeden önce: geri alma seçimi, ölü seçim düşmeden remap eder.
 	e.toolbar(mut c, mut srv)
+	e.file_shortcuts(mut c, mut srv)
+	e.settle_confirm(mut srv)
+	if e.confirm != .idle {
+		e.confirm_strip(mut c, mut srv)
+	}
 	e.body(mut c, mut srv)
 	// Sahne görünümü: önceki karenin sahne dikdörtgeni (düzen bir kare geriden; ilk karede sıfır, işlem yok).
 	scene := c.prev_rect(c.id('scene')) or { ui.Rect{} }
@@ -149,7 +170,10 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 	}
 	e.format_status(srv)
 	c.statusbar_begin()
-	if e.err_len > 0 {
+	flash := e.flash_text()
+	if flash != '' {
+		c.text(flash, .caption, ui.danger)
+	} else if e.err_len > 0 {
 		c.text(e.load_error(), .caption, ui.danger)
 	} else if e.note_len > 0 {
 		c.statusbar_text(e.note_text())
@@ -178,15 +202,17 @@ fn (mut e Editor) toolbar(mut c ui.Context, mut srv protocol.Server) {
 	if c.icon_button('Adım', .step, false) {
 		e.step(mut srv)
 	}
-	// Geri al ve yinele 9. görevde (undo/redo) etkinleşir.
-	c.icon_button_ex('Geri al', .undo, false, false)
-	c.icon_button_ex('Yinele', .redo, false, false)
+	// Geri al / yinele: yığın doluysa ve sürükleme grubu kapalıysa etkin.
+	undo_n, redo_n := srv.history_lens()
+	can_hist := !e.group_open()
+	if c.icon_button_ex('Geri al', .undo, false, can_hist && undo_n > 0) {
+		e.history_step(mut srv, true)
+	}
+	if c.icon_button_ex('Yinele', .redo, false, can_hist && redo_n > 0) {
+		e.history_step(mut srv, false)
+	}
 	c.spacer()
-	c.text(e.file_label(), .body_strong, ui.text_primary)
-	c.spacer()
-	// Aç ve Kaydet 9. görevde etkinleşir.
-	c.button_ex('Aç', .secondary, false)
-	c.button_ex('Kaydet', .primary, false)
+	e.file_bar(mut c, mut srv)
 	c.toolbar_end()
 }
 

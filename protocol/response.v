@@ -36,3 +36,19 @@ pub fn response_entity(resp string) ?ecs.EntityID {
 	}
 	return ecs.EntityID(u64(ent.f64()))
 }
+
+// history.undo/redo yanıtında eski id'nin yeni karşılığı (remap: [{old,new}]); yoksa none.
+pub fn response_remap(resp string, old ecs.EntityID) ?ecs.EntityID {
+	v := parse(resp) or { return none }
+	res := v.get('result') or { return none }
+	list := res.get('remap') or { return none }
+	for i in 0 .. list.len() {
+		p := list.at(i) or { continue }
+		o := p.get('old') or { continue }
+		n := p.get('new') or { continue }
+		if ecs.EntityID(u64(o.f64())) == old {
+			return ecs.EntityID(u64(n.f64()))
+		}
+	}
+	return none
+}

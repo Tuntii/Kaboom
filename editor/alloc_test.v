@@ -101,3 +101,37 @@ fn test_idle_frames_zero_alloc_1000_entities() {
 	}
 	assert memory.heap_alloc_count() - before == 0
 }
+
+// Kaydedilmemiş değişiklik şeridi ve açık yol alanı varken boşta kareler de heap tahsisi yapmaz.
+fn test_idle_frames_zero_alloc_with_strip_and_field() {
+	if !memory.heap_tracking_enabled() {
+		eprintln('atlandi: -d track_heap ile calistir')
+		return
+	}
+	mut srv := protocol.Server.new(sim.Config{ capacity: 64, queue_capacity: 64, record_capacity: 1024 }) or {
+		panic(err)
+	}
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	srv.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}') or { panic('yanit yok') }
+	e.request_close()
+	e.show_field(.open)
+	for k in 0 .. 10 {
+		c.begin(ui.Input{ mouse_x: -1, mouse_y: -1, time_ms: f64(k) * 16 }, 1440, 900, 1.0)
+		e.frame(mut c, mut srv)
+		c.end()
+	}
+	assert e.confirm == .close, 'şerit açık olmalı'
+	assert e.file_field == .open, 'yol alanı açık olmalı'
+	before := memory.heap_alloc_count()
+	for k in 10 .. 110 {
+		c.begin(ui.Input{ mouse_x: -1, mouse_y: -1, time_ms: f64(k) * 16 }, 1440, 900, 1.0)
+		e.frame(mut c, mut srv)
+		c.end()
+	}
+	assert memory.heap_alloc_count() - before == 0
+}

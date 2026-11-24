@@ -78,6 +78,7 @@ fn C.glGetString(name u32) &u8
 fn C.vcore_win_reset()
 fn C.vcore_win_mark_closed()
 fn C.vcore_win_closed() int
+fn C.vcore_win_clear_closed()
 fn C.vcore_in_ptr() &C.VcoreInput
 fn C.vcore_pending_get() u16
 fn C.vcore_pending_set(v u16)
@@ -344,6 +345,11 @@ pub fn (mut w Window) close() {
 		C.DestroyWindow(w.hwnd)
 		w.hwnd = unsafe { nil }
 	}
+}
+
+// Kapanış isteğini tüketir: çağıran (editör) karar verene kadar pencere açık kalır.
+pub fn (mut w Window) clear_close() {
+	C.vcore_win_clear_closed()
 }
 
 // Bekleyen mesajları boşaltır. Kapanış isteği (WM_CLOSE veya WM_QUIT) görülürse false döner.

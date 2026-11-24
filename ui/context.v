@@ -671,6 +671,11 @@ pub fn (c &Context) keyboard_captured() bool {
 	return c.txt_id != 0 || c.num_id != 0
 }
 
+// Odağı etikete verir (kare içinde, alan çizilmeden önce): editör yol alanı açılınca yazı hemen girilir.
+pub fn (mut c Context) focus_label(label string) {
+	c.focus = c.id(label)
+}
+
 // Kısayol: k bu karede basıldı ve klavye bir alanda değil. Çağıran kısayolu alanları çizdikten sonra sorgulamalı.
 pub fn (c &Context) shortcut(k Key) bool {
 	return !c.keyboard_captured() && c.key_pressed(k)

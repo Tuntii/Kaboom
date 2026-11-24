@@ -53,6 +53,7 @@ static void vcore_win_reset(void) {
 }
 static void vcore_win_mark_closed(void) { vcore_win_closed_flag = 1; }
 static int vcore_win_closed(void) { return vcore_win_closed_flag; }
+static void vcore_win_clear_closed(void) { vcore_win_closed_flag = 0; }
 
 // Frekans değişmez; ilk çağrıda okunur. 0 dönerse 1 kabul edilir ki now_ns sıfıra bölmesin.
 static unsigned long long vcore_qpc_freq(void) {

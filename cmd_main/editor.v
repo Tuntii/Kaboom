@@ -139,7 +139,9 @@ fn run_editor(args []string) {
 			eof = true
 		}
 		if !win.poll() {
-			break
+			// WM_CLOSE pencereyi kapatmaz: istek editöre gider; kaydedilmemiş değişiklik varsa şerit çıkar.
+			win.clear_close()
+			ed.request_close()
 		}
 		fw, fh := win.size()
 		if fw <= 0 || fh <= 0 {
@@ -192,6 +194,9 @@ fn run_editor(args []string) {
 		win.set_cursor(cursor_for(fr.cursor))
 		win.swap()
 		frame++
+		if ed.should_close() {
+			break
+		}
 		// Ekran görüntüsü bekliyorsa stdin EOF'u çıkış nedeni değildir: kare sayısı dolunca yakalanır.
 		if o.hidden && eof && o.screenshot == '' {
 			break
