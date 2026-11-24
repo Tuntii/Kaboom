@@ -118,7 +118,12 @@ fn showcase_editor(mut c Context, mut st ShowcaseState) {
 	c.spacer()
 	c.icon_button('Ekle', .plus, false)
 	c.close()
-	for k in 0 .. hier_names.len {
+	hl := c.virtual_list_begin('hier_list', hier_names.len, row_h, Box{
+		dir:    .column
+		width:  grow()
+		height: grow()
+	})
+	for k in hl.first .. hl.first + hl.count {
 		it := c.list_row_begin(hier_names[k], st.selected == k)
 		if it.clicked {
 			st.selected = k
@@ -128,6 +133,7 @@ fn showcase_editor(mut c Context, mut st ShowcaseState) {
 		c.text(hier_badges[k], .caption, text_muted)
 		c.list_row_end()
 	}
+	c.virtual_list_end()
 	c.close()
 	c.splitter('split_l', mut &st.left_w, 160, 420, true)
 
@@ -147,11 +153,11 @@ fn showcase_editor(mut c Context, mut st ShowcaseState) {
 		bg:      surface_1
 	})
 	c.text(hier_names[st.selected], .title, text_primary)
-	if c.section('sec_transform', 'Transform') {
+	if c.section_ex('sec_transform', 'Transform', SectionOpts{}).open {
 		prop_num(mut c, 'x', mut &st.x, 'm', 2, 0.1, -100, 100)
 		prop_num(mut c, 'y', mut &st.y, 'm', 2, 0.1, -100, 100)
 	}
-	if c.section('sec_sprite', 'Sprite') {
+	if c.section_ex('sec_sprite', 'Sprite', SectionOpts{}).open {
 		prop_num(mut c, 'size', mut &st.size, 'm', 2, 0.1, 0.1, 50)
 		prop_num(mut c, 'r', mut &st.r, '', 2, 0.01, 0, 1)
 		prop_num(mut c, 'g', mut &st.g, '', 2, 0.01, 0, 1)

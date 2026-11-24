@@ -127,6 +127,9 @@ mut:
 	intr    [2]f32 // ebeveynin hesaba katacağı boyut (min/max kıskaçlı)
 	sz      [2]f32
 	pos     [2]f32
+	ext     [4]f32 // alt ağacın birleşik dikdörtgeni (x0, y0, x1, y1); çizim geçişi görünmeyen dalları atlar
+	ell     bool   // metin kısaltıldı: ell_at bayt sınırına kadar glifler, sonra …
+	ell_at  int
 }
 
 // Eksen 0 = x (genişlik), 1 = y (yükseklik).
@@ -195,6 +198,39 @@ fn (mut c Context) layout() {
 		c.fit_axis(a)
 	}
 	c.place()
+	c.extents()
+}
+
+// Çocuklar önce (indeksleri büyük): her düğümün alt ağaç dikdörtgeni; çizim geçişi kırpma dışı dalı tek adımda atlar.
+fn (mut c Context) extents() {
+	for i := c.n - 1; i >= 0; i-- {
+		mut nd := &c.nodes[i]
+		mut x0 := nd.pos[0]
+		mut y0 := nd.pos[1]
+		mut x1 := nd.pos[0] + nd.sz[0]
+		mut y1 := nd.pos[1] + nd.sz[1]
+		mut ch := nd.first
+		for ch >= 0 {
+			e := c.nodes[ch].ext
+			if e[0] < x0 {
+				x0 = e[0]
+			}
+			if e[1] < y0 {
+				y0 = e[1]
+			}
+			if e[2] > x1 {
+				x1 = e[2]
+			}
+			if e[3] > y1 {
+				y1 = e[3]
+			}
+			ch = c.nodes[ch].next
+		}
+		nd.ext[0] = x0
+		nd.ext[1] = y0
+		nd.ext[2] = x1
+		nd.ext[3] = y1
+	}
 }
 
 // Alttan yukarı (ters oluşturma sırası): doğal boyutları hesaplar.
@@ -422,6 +458,18 @@ fn (mut c Context) paint(i int, clip Rect) {
 	if clip.w <= 0 || clip.h <= 0 {
 		return
 	}
+	// Alt ağacın tamamı kırpmanın dışındaysa hiçbir komut ya da imleç isabeti üretilmez: dal atlanır.
+	e := c.nodes[i].ext
+	reach := clip.intersect(Rect{
+		x: e[0]
+		y: e[1]
+		w: e[2] - e[0]
+		h: e[3] - e[1]
+	})
+	if reach.w <= 0 || reach.h <= 0 {
+		return
+	}
+	c.visited++
 	b := c.nodes[i].box
 	// Kaydırma kutusu çocuklarını her zaman kırpar.
 	child_clip := if b.clip || b.scroll_y { clip.intersect(r) } else { clip }
@@ -527,10 +575,12 @@ fn (mut c Context) emit_text(i int, clip Rect) {
 	base_y := snap(c.nodes[i].pos[1] * sc + c.atl.ascent(role) * sc)
 	color := u32(c.nodes[i].color)
 	s := c.nodes[i].text
+	// Kısaltılmış metin: kesim bayt sınırına kadar glifler, ardından … (text_trunc ölçümüyle aynı kerning).
+	lim := if c.nodes[i].ell { c.nodes[i].ell_at } else { s.len }
 	mut pen := f32(0)
 	mut prev := u32(0)
 	mut k := 0
-	for k < s.len {
+	for k < lim {
 		cp, next := utf8_next(s, k)
 		if k > 0 {
 			pen += c.atl.kern(role, prev, cp)
@@ -542,6 +592,15 @@ fn (mut c Context) emit_text(i int, clip Rect) {
 		pen += g.advance
 		prev = cp
 		k = next
+	}
+	if c.nodes[i].ell {
+		if lim > 0 {
+			pen += c.atl.kern(role, prev, ellipsis_cp)
+		}
+		g := c.atl.glyph(role, ellipsis_cp)
+		if g.x1 > g.x0 {
+			c.emit_glyph(g, snap(base_x + pen), base_y, color, clip)
+		}
 	}
 }
 

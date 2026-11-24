@@ -628,13 +628,20 @@ pub fn (mut c Context) menu_button_ex(label string, text string, width Size, lea
 	menu_r := c.prev_rect(mid) or { Rect{} }
 	if it.clicked {
 		open = !open
+		if h >= 0 {
+			c.states[h].data[off_menu_hl] = menu_none
+		}
 	} else if open && (c.key_pressed(.escape) || (c.inp.pressed[0] && !it.hovered && !menu_r.contains(c.inp.mouse_x, c.inp.mouse_y))) {
 		open = false
 	}
 	if h >= 0 {
 		c.states[h].set_flag(off_open, open)
+		if open {
+			c.menu_nav(h)
+		}
 	}
 	c.menu_cur = id
+	c.menu_idx = 0
 	t := c.hover_t(mid, open)
 	c.menu_alpha = t
 	bt := c.hover_t(id, it.hovered)
@@ -678,11 +685,35 @@ pub fn (mut c Context) menu_button_ex(label string, text string, width Size, lea
 // Yukarıdan kayma (px); menü açılışında 0'a iner.
 const menu_slide = space_1
 
-// Menü öğesi: tıklanınca true ve menü kapanır.
+// Açık menüde ok tuşları vurguyu taşır (sarmalı). Öğe sayısı önceki karenin sayısıdır; ilk karede yoktur.
+fn (mut c Context) menu_nav(h int) {
+	n := int(c.states[h].data[off_menu_n])
+	if n == 0 {
+		return
+	}
+	cur := int(c.states[h].data[off_menu_hl])
+	if c.key_pressed(.down) {
+		next := if cur >= n - 1 { 0 } else { cur + 1 }
+		c.states[h].data[off_menu_hl] = u8(next)
+	} else if c.key_pressed(.up) {
+		next := if cur <= 0 || cur >= n { n - 1 } else { cur - 1 }
+		c.states[h].data[off_menu_hl] = u8(next)
+	}
+}
+
+// Menü öğesi: fare tıklaması ya da vurgulu öğede Enter ile true ve menü kapanır.
 pub fn (mut c Context) menu_item(text string) bool {
 	c.push_id(2)
 	iid := c.id(text)
 	it := c.interact(iid, true)
+	idx := c.menu_idx
+	c.menu_idx++
+	th := c.touch(c.menu_cur)
+	mut kb := false
+	if th >= 0 {
+		kb = int(c.states[th].data[off_menu_hl]) == idx
+		c.states[th].data[off_menu_n] = u8(c.menu_idx)
+	}
 	t := c.hover_t(iid, it.hovered)
 	c.open(text, Box{
 		dir:         .row
@@ -690,19 +721,19 @@ pub fn (mut c Context) menu_item(text string) bool {
 		height:      fixed(row_h)
 		padding:     pad_xy(space_2, 0)
 		align_cross: .center
-		bg:          fade(mix(surface_hover.with_alpha(0), surface_hover, t), c.menu_alpha)
+		bg:          fade(if kb { surface_hover } else { mix(surface_hover.with_alpha(0), surface_hover, t) }, c.menu_alpha)
 		radius:      radius_control
 	})
 	c.pop_id()
 	c.text(text, .body, fade(text_primary, c.menu_alpha))
 	c.close()
-	if it.clicked {
-		h := c.touch(c.menu_cur)
-		if h >= 0 {
-			c.states[h].set_flag(off_open, false)
+	chosen := it.clicked || (kb && c.key_pressed(.enter))
+	if chosen {
+		if th >= 0 {
+			c.states[th].set_flag(off_open, false)
 		}
 	}
-	return it.clicked
+	return chosen
 }
 
 pub fn (mut c Context) menu_end() {

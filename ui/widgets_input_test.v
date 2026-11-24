@@ -1136,3 +1136,61 @@ fn test_number_field_external_change_then_enter_commits() {
 	assert t.last.changed
 	assert c.num_id == 0
 }
+
+struct MenuKbProbe {
+mut:
+	open bool
+	sel  int
+}
+
+fn menu_key_at(k Key, t f64) Input {
+	mut inp := Input{
+		time_ms: t
+	}
+	inp.keys[0] = k
+	inp.key_count = 1
+	return inp
+}
+
+// Fareyle açılan menüde Aşağı ×2 ikinci öğeyi vurgular, Enter seçer; Esc kapatır.
+fn test_menu_keyboard_navigation() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := MenuKbProbe{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			if c.menu_item('bir') {
+				tp.sel = 1
+			}
+			if c.menu_item('iki') {
+				tp.sel = 2
+			}
+			if c.menu_item('üç') {
+				tp.sel = 3
+			}
+			c.menu_end()
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(5, 5), 1000), body)
+	wgt_frame(mut c, timed(press_at(5, 5), 1000), body)
+	wgt_frame(mut c, timed(release_at(5, 5), 1000), body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.down, 1200), 1200), body)
+	wgt_frame(mut c, timed(menu_key_at(.down, 1200), 1200), body)
+	wgt_frame(mut c, timed(menu_key_at(.enter, 1200), 1200), body)
+	assert t.sel == 2
+	wgt_frame(mut c, timed(mouse_at(300, 200), 1300), body)
+	assert !t.open
+
+	// Yeniden aç; Aşağı ile vurgu taşınır, Esc menüyü kapatır (seçim olmaz).
+	wgt_frame(mut c, timed(mouse_at(5, 5), 1400), body)
+	wgt_frame(mut c, timed(press_at(5, 5), 1400), body)
+	wgt_frame(mut c, timed(release_at(5, 5), 1400), body)
+	assert t.open
+	wgt_frame(mut c, timed(menu_key_at(.down, 1500), 1500), body)
+	wgt_frame(mut c, timed(menu_key_at(.escape, 1500), 1500), body)
+	assert !t.open
+	assert t.sel == 2
+}

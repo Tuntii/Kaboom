@@ -666,3 +666,125 @@ fn test_enter_repeat_does_not_activate() {
 	wgt_frame(mut c, rep, body)
 	assert t.ok == 0
 }
+
+struct SecProbe {
+mut:
+	open     bool
+	trailing bool
+	clicks   int
+}
+
+// Sağ uçtaki ikon bölümü katlamaz; yalnızca trailing_clicked olur.
+fn test_section_ex_trailing_icon_click() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut p := SecProbe{}
+	mut pp := &p
+	body := fn [mut pp] (mut c Context) {
+		r := c.section_ex('sec', 'Başlık', SectionOpts{
+			trailing_icon: Icon.trash
+		})
+		pp.open = r.open
+		if r.trailing_clicked {
+			pp.trailing = true
+			pp.clicks++
+		}
+	}
+	// Başlık 400 px genişlikte, row_h yüksekte; sağ uç ikon kutusunun içi.
+	tx := f32(400) - row_h / 2
+	ty := row_h / 2
+	wgt_frame(mut c, mouse_at(tx, ty), body)
+	wgt_frame(mut c, press_at(tx, ty), body)
+	wgt_frame(mut c, release_at(tx, ty), body)
+	assert p.trailing
+	assert p.clicks == 1
+	assert p.open
+}
+
+// default_open false: ilk karede kapalı; tıklanınca açılır ve kalıcıdır.
+fn test_section_ex_default_closed() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut p := SecProbe{}
+	mut pp := &p
+	body := fn [mut pp] (mut c Context) {
+		r := c.section_ex('sec', 'Başlık', SectionOpts{
+			default_open: false
+		})
+		pp.open = r.open
+		if r.open {
+			c.text('içerik', .body, text_primary)
+		}
+	}
+	wgt_frame(mut c, mouse_at(5, 5), body)
+	assert !p.open
+	wgt_frame(mut c, press_at(5, 5), body)
+	wgt_frame(mut c, release_at(5, 5), body)
+	assert p.open
+	wgt_frame(mut c, mouse_at(5, 5), body)
+	assert p.open
+}
+
+// Sığmayan metin sonunda … (U+2026) ile, kod noktası sınırında kesilir; sığan metin kesilmez.
+fn test_text_trunc_adds_ellipsis_at_codepoint_boundary() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	s := 'Kaydedilmemiş değişiklikler'
+	max_w := f32(60)
+	c.begin(Input{}, 400, 300, 1.0)
+	c.text_trunc(s, .body, text_primary, max_w)
+	c.text_trunc('ab', .body, text_primary, 100)
+	c.end()
+	mut long := -1
+	mut short := -1
+	for k in 0 .. c.n {
+		if c.nodes[k].kind == .text {
+			if c.nodes[k].text == s {
+				long = k
+			} else {
+				short = k
+			}
+		}
+	}
+	assert long >= 0 && short >= 0
+	assert c.nodes[long].ell
+	assert c.nodes[long].content[0] <= max_w
+	assert c.nodes[long].ell_at < s.len
+	// Kesim noktası baştan yürüyüşle bulunan bir kod noktası sınırı olmalı.
+	mut k := 0
+	mut boundary := false
+	for k <= c.nodes[long].ell_at {
+		if k == c.nodes[long].ell_at {
+			boundary = true
+			break
+		}
+		_, nx := utf8_next(s, k)
+		k = nx
+	}
+	assert boundary
+	assert !c.nodes[short].ell
+}
+
+// Durum tablosu dolunca taşma sayılır (sessiz düşme yok).
+fn test_state_table_overflow_counted() {
+	mut atl := wgt_atlas()
+	// Küçük kapasite: durum tablosu 8 yuvalıdır.
+	mut c := Context.new(&atl, 4, 256) or { panic(err) }
+	c.begin(Input{}, 400, 300, 1.0)
+	for k in 0 .. 40 {
+		c.interact(c.id('k${k}'), false)
+	}
+	c.end()
+	assert c.state_overflow() > 0
+}
+
+// Ölçek eşleşince begin normal çalışır (eşleşmeyen ölçek assert ile durur; kod incelemesiyle doğrulanır).
+fn test_begin_scale_matches_atlas_ok() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	c.begin(Input{}, 400, 300, 1.0)
+	c.text('tamam', .body, text_primary)
+	c.end()
+	assert c.node_overflow() == 0
+	assert c.n > 1
+}
