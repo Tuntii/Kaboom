@@ -56,4 +56,24 @@ fn test_tick_has_zero_heap_allocs() {
 	assert memory.heap_alloc_count() == before
 	// Geçmiş gerçekten yakalıyor olmalı; aksi halde sıfır tahsis kanıtı geçmişi kapsamaz.
 	assert s.history.undo_len() > 0
+
+	// Yapısal komutlar (add, remove, despawn, spawn) da geçmişe yazılır; ölçülen tick'lerde tahsissiz olmalı.
+	e0 := s.world.spawn() or { panic('spawn none') }
+	assert s.world.add_component(e0, ecs.body_id) == .ok
+	mut e1 := s.world.spawn() or { panic('spawn none') }
+	before2 := memory.heap_alloc_count()
+	for _ in 0 .. 100 {
+		s.push(cmd.Command{ kind: .add_component, source: .agent, comp: ecs.transform_id, entity: e1 })
+		s.push(cmd.Command{ kind: .remove_component, source: .agent, comp: ecs.body_id, entity: e0 })
+		s.push(cmd.Command{ kind: .add_component, source: .agent, comp: ecs.body_id, entity: e0 })
+		s.push(cmd.Command{ kind: .despawn, source: .agent, entity: e1 })
+		s.push(cmd.Command{ kind: .spawn, source: .agent })
+		s.step()
+		// Her yapısal komut gerçekten uygulanmış olmalı; yoksa test boş yere geçer.
+		assert s.queue.result(0).status == .ok && s.queue.result(1).status == .ok
+		assert s.queue.result(2).status == .ok && s.queue.result(3).status == .ok
+		// Son komut (spawn) dönen yeni id'yi sonraki tick'in e1'i yapar.
+		e1 = s.queue.result(4).entity
+	}
+	assert memory.heap_alloc_count() == before2
 }

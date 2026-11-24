@@ -10,7 +10,7 @@ pub enum HistoryMode {
 	redoing
 }
 
-// Bir komutun ters işlemi: halkadaki mutlak komut sırası ve uzunluk. Blok halkada bitişik durur.
+// Bir komutun ters bloğu. Halkada start mutlak komut sırasıdır; hazırlama alanında göreli ofsettir.
 struct HistoryBlock {
 	start u64
 	n     u32
@@ -24,7 +24,7 @@ struct HistoryGroup {
 	bend   u64
 }
 
-// Tek yığın (undo ya da redo). Sıra numaraları u64 mutlak sayaçtır; halkaya mod ile yazılır.
+// Tek yığın (undo ya da redo). Yalnızca tamamlanmış gruplar burada durur; açık grup History'nin hazırlama alanında.
 struct HistoryStack {
 mut:
 	cmds      &Command
@@ -39,11 +39,6 @@ mut:
 	grp_first u64
 	grp_next  u64
 	dropped   u64
-	// Açık grup: ilk yazımda başlar, grup kapanınca yığına girer ya da taşarsa geri alınır.
-	open_on   bool
-	open_over bool
-	open_c    u64
-	open_b    u64
 }
 
 fn HistoryStack.new(mut parent memory.LinearArena, cap u32, gcap u32) ?HistoryStack {
@@ -59,6 +54,7 @@ fn HistoryStack.new(mut parent memory.LinearArena, cap u32, gcap u32) ?HistorySt
 	}
 }
 
+// Sayaçları sıfırlar; düşürme sayısı (tanılama) korunur.
 fn (mut s HistoryStack) reset() {
 	s.cmd_first = 0
 	s.cmd_next = 0
@@ -66,8 +62,6 @@ fn (mut s HistoryStack) reset() {
 	s.blk_next = 0
 	s.grp_first = 0
 	s.grp_next = 0
-	s.open_on = false
-	s.open_over = false
 }
 
 // En eski tamamlanmış grubu düşürür; kapasite baskısı ya da grup tablosu dolunca çağrılır.
@@ -79,76 +73,56 @@ fn (mut s HistoryStack) evict_oldest() {
 	s.dropped++
 }
 
-// Bloğu açık grubun sonuna yazar. Sığmıyorsa en eski gruplar düşer; düşecek grup yoksa açık grup taşar.
-// Blok halkada sarmaz: sarma noktasında kalan boşluk atlanır, böylece dilim doğrudan halkaya bakabilir.
-fn (mut s HistoryStack) write_block(src &Command, n u32) {
-	if !s.open_on {
-		s.open_on = true
-		s.open_c = s.cmd_next
-		s.open_b = s.blk_next
-	}
-	if s.open_over {
-		return
-	}
-	mut start := s.cmd_next
-	if start % s.cap + u64(n) > s.cap {
-		start += s.cap - start % s.cap
-	}
-	for start + u64(n) - s.cmd_first > s.cap || s.blk_next - s.blk_first >= s.cap {
-		if s.grp_first == s.grp_next {
-			s.open_over = true
-			return
-		}
-		s.evict_oldest()
-	}
-	for i in 0 .. n {
-		unsafe {
-			s.cmds[(start + u64(i)) % s.cap] = src[i]
-		}
-	}
-	unsafe {
-		s.blocks[s.blk_next % s.cap] = HistoryBlock{
-			start: start
-			n:     n
-		}
-	}
-	s.blk_next++
-	s.cmd_next = start + u64(n)
-}
-
-// Açık grubu kapatır: boşsa yığına girmez; taşmışsa tamamen geri alınır ve düşürülmüş sayılır.
-fn (mut s HistoryStack) close_group() {
-	if !s.open_on {
-		return
-	}
-	s.open_on = false
-	if s.open_over {
-		s.open_over = false
-		s.cmd_next = s.open_c
-		s.blk_next = s.open_b
-		s.dropped++
-		return
-	}
-	if s.blk_next == s.open_b {
-		return
-	}
+// Tamamlanmış grubu yığına yerleştirir. Hazırlama alanındaki n komut ve nb blok tek bir bitişik
+// parça olarak yazılır: sarma gerekiyorsa boşluk atlanır, böylece dilim doğrudan halkaya bakar.
+// Sığmak için en eski gruplar düşer; grup tek başına kapasiteye sığar (çağıran garanti eder).
+fn (mut s HistoryStack) push_group(src &Command, n u32, sblk &HistoryBlock, nb u32) {
 	if s.grp_next - s.grp_first == s.gcap {
 		s.evict_oldest()
 	}
+	mut gs := s.cmd_next
+	if gs % s.cap + u64(n) > s.cap {
+		gs += s.cap - gs % s.cap
+	}
+	for gs + u64(n) - s.cmd_first > s.cap || s.blk_next - s.blk_first + u64(nb) > s.cap {
+		if s.grp_first == s.grp_next {
+			// Tamamlanmış grup kalmadı: önceki boşluk veri değildir, yalnız bu grup sayılır.
+			s.cmd_first = gs
+			s.blk_first = s.blk_next
+			break
+		}
+		s.evict_oldest()
+	}
+	for k in 0 .. nb {
+		b := unsafe { sblk[k] }
+		for i in 0 .. b.n {
+			unsafe {
+				s.cmds[(gs + b.start + u64(i)) % s.cap] = src[b.start + u64(i)]
+			}
+		}
+		unsafe {
+			s.blocks[(s.blk_next + u64(k)) % s.cap] = HistoryBlock{
+				start: gs + b.start
+				n:     b.n
+			}
+		}
+	}
 	unsafe {
 		s.groups[s.grp_next % s.gcap] = HistoryGroup{
-			cstart: s.open_c
-			cend:   s.cmd_next
-			bstart: s.open_b
-			bend:   s.blk_next
+			cstart: gs
+			cend:   gs + u64(n)
+			bstart: s.blk_next
+			bend:   s.blk_next + u64(nb)
 		}
 	}
 	s.grp_next++
+	s.blk_next += u64(nb)
+	s.cmd_next = gs + u64(n)
 }
 
 // En yeni grubu yığından çıkarır; blokları ters sırada gezen görünüm döner.
 fn (mut s HistoryStack) pop() ?GroupView {
-	if s.grp_next == s.grp_first || s.open_on {
+	if s.grp_next == s.grp_first {
 		return none
 	}
 	s.grp_next--
@@ -220,6 +194,14 @@ mut:
 	scratch_cap u32
 	scratch_n   u32
 	stacks      [2]HistoryStack // 0 undo, 1 redo
+	// Açık grup yığınlara girmeden buraya birikir: sığmayan grup hiçbir eski grubu düşürmez.
+	stage_cmds  &Command
+	stage_blks  &HistoryBlock
+	stage_cap   u32
+	stage_n     u32
+	stage_b     u32
+	stage_over  bool
+	stage_t     int // açık grubun hedef yığını (0 undo, 1 redo); -1 açık grup yok
 }
 
 // Bir bloğun en büyük boyu: spawn/despawn ters bloğu, her bileşen için add ve her alan için set.
@@ -232,7 +214,7 @@ fn scratch_bound(reg &ecs.Registry) u32 {
 	return n
 }
 
-// Her iki yığın için halkalar ve kapsamı kadar hazırlık alanı. Hata olursa parent geri sarılır.
+// Her iki yığın, hazırlama alanı ve scratch için bellek. Hata olursa parent geri sarılır.
 pub fn History.new(mut parent memory.LinearArena, reg &ecs.Registry, capacity u32, max_groups u32) ?History {
 	if capacity == 0 || max_groups == 0 {
 		return none
@@ -246,6 +228,14 @@ pub fn History.new(mut parent memory.LinearArena, reg &ecs.Registry, capacity u3
 		parent.rewind(m)
 		return none
 	}
+	stage_cmds := parent.alloc_aligned(u64(capacity) * u64(sizeof(Command)), 8) or {
+		parent.rewind(m)
+		return none
+	}
+	stage_blks := parent.alloc_aligned(u64(capacity) * u64(sizeof(HistoryBlock)), 8) or {
+		parent.rewind(m)
+		return none
+	}
 	bound := scratch_bound(reg)
 	scratch := parent.alloc_aligned(u64(bound) * u64(sizeof(Command)), 8) or {
 		parent.rewind(m)
@@ -255,6 +245,10 @@ pub fn History.new(mut parent memory.LinearArena, reg &ecs.Registry, capacity u3
 		scratch:     unsafe { &Command(scratch) }
 		scratch_cap: bound
 		stacks:      [undo, redo]!
+		stage_cmds:  unsafe { &Command(stage_cmds) }
+		stage_blks:  unsafe { &HistoryBlock(stage_blks) }
+		stage_cap:   capacity
+		stage_t:     -1
 	}
 }
 
@@ -262,8 +256,9 @@ pub fn History.new(mut parent memory.LinearArena, reg &ecs.Registry, capacity u3
 pub fn History.bytes_needed(reg &ecs.Registry, capacity u32, max_groups u32) u64 {
 	per_stack := u64(capacity) * u64(sizeof(Command)) + u64(capacity) * u64(sizeof(HistoryBlock)) +
 		u64(max_groups) * u64(sizeof(HistoryGroup))
+	stage := u64(capacity) * u64(sizeof(Command)) + u64(capacity) * u64(sizeof(HistoryBlock))
 	scratch := u64(scratch_bound(reg)) * u64(sizeof(Command))
-	return 2 * per_stack + scratch + 7 * 64
+	return 2 * per_stack + stage + scratch + 9 * 64
 }
 
 // Kullanıcı adımı başlar. Derinlik sayacı: iç içe çağrılar dış grubu bekler.
@@ -281,10 +276,25 @@ pub fn (mut h History) end_group() {
 	}
 	h.depth--
 	if h.depth == 0 {
-		for i in 0 .. h.stacks.len {
-			h.stacks[i].close_group()
-		}
+		h.close_group()
 	}
+}
+
+// Açık grubu hedef yığına yerleştirir. Taşmışsa hiçbir yığına dokunmadan düşürülmüş sayılır.
+fn (mut h History) close_group() {
+	if h.stage_t == -1 {
+		return
+	}
+	t := h.stage_t
+	if h.stage_over {
+		h.stacks[t].dropped++
+	} else if h.stage_b > 0 {
+		h.stacks[t].push_group(h.stage_cmds, h.stage_n, h.stage_blks, h.stage_b)
+	}
+	h.stage_t = -1
+	h.stage_n = 0
+	h.stage_b = 0
+	h.stage_over = false
 }
 
 pub fn (mut h History) set_mode(m HistoryMode) {
@@ -300,8 +310,25 @@ fn (mut h History) put(c Command) {
 	h.scratch_n++
 }
 
+// Bileşenin her alanı için eski değerli set yazar. Bir okuma başarısızsa false döner: sıfır değerli
+// (yanlış) ters işlem yazılmaz, çağıran yakalamayı iptal eder.
+fn (mut h History) put_fields(w &ecs.World, e ecs.EntityID, comp u16, source Source) bool {
+	for f in 0 .. w.store(comp).field_count() {
+		v := w.get_field(e, comp, f) or { return false }
+		h.put(Command{
+			kind:   .set_field
+			source: source
+			comp:   comp
+			field:  f
+			entity: e
+			value:  v
+		})
+	}
+	return true
+}
+
 // Uygulamadan önce çağrılır: komutun ters bloğunu scratch alanına yazar. Script komutları ve
-// uygulanamayacak komutlar (yok varlık/bileşen) hazırlanmaz.
+// uygulanamayacak komutlar (yok varlık/bileşen, okunamayan alan) hazırlanmaz.
 pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 	h.prepared = false
 	if c.source == .script {
@@ -337,16 +364,8 @@ pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 					comp:   comp
 					entity: c.entity
 				})
-				for f in 0 .. w.store(comp).field_count() {
-					v := w.get_field(c.entity, comp, f) or { u64(0) }
-					h.put(Command{
-						kind:   .set_field
-						source: c.source
-						comp:   comp
-						field:  f
-						entity: c.entity
-						value:  v
-					})
+				if !h.put_fields(w, c.entity, comp, c.source) {
+					return
 				}
 			}
 		}
@@ -368,16 +387,8 @@ pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 				comp:   c.comp
 				entity: c.entity
 			})
-			for f in 0 .. w.store(c.comp).field_count() {
-				v := w.get_field(c.entity, c.comp, f) or { u64(0) }
-				h.put(Command{
-					kind:   .set_field
-					source: c.source
-					comp:   c.comp
-					field:  f
-					entity: c.entity
-					value:  v
-				})
+			if !h.put_fields(w, c.entity, c.comp, c.source) {
+				return
 			}
 		}
 		.set_field {
@@ -395,7 +406,34 @@ pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 	h.prepared = true
 }
 
-// Uygulamadan sonra çağrılır: başarılıysa hazırlanan bloğu aktif yığına ekler. Grup dışında her blok kendi grubudur.
+// Hazırlama alanına blok ekler. Hedef yığın grubun ilk bloğunda sabitlenir; sonraki bloklar aynı yığına gider.
+fn (mut h History) stage_block(t int, src &Command, n u32) {
+	if h.stage_t == -1 {
+		h.stage_t = t
+	}
+	if h.stage_over {
+		return
+	}
+	if h.stage_n + n > h.stage_cap || h.stage_b >= h.stage_cap {
+		h.stage_over = true
+		return
+	}
+	for i in 0 .. n {
+		unsafe {
+			h.stage_cmds[h.stage_n + i] = src[i]
+		}
+	}
+	unsafe {
+		h.stage_blks[h.stage_b] = HistoryBlock{
+			start: u64(h.stage_n)
+			n:     n
+		}
+	}
+	h.stage_b++
+	h.stage_n += n
+}
+
+// Uygulamadan sonra çağrılır: başarılıysa hazırlanan bloğu açık gruba ekler. Grup dışında her blok kendi grubudur.
 pub fn (mut h History) commit_capture(r ApplyResult) {
 	if !h.prepared {
 		return
@@ -422,7 +460,7 @@ pub fn (mut h History) commit_capture(r ApplyResult) {
 		h.fresh = false
 	}
 	t := if h.mode == .undoing { 1 } else { 0 }
-	h.stacks[t].write_block(h.scratch, h.scratch_n)
+	h.stage_block(t, h.scratch, h.scratch_n)
 	if auto {
 		h.end_group()
 	}
@@ -430,10 +468,16 @@ pub fn (mut h History) commit_capture(r ApplyResult) {
 
 // En yeni undo grubunu çıkarır. Dönen görünüm halka belleğine bakar; değiştirmeden önce kopyalanmalıdır.
 pub fn (mut h History) pop_undo() ?GroupView {
+	if h.stage_t != -1 {
+		return none
+	}
 	return h.stacks[0].pop()
 }
 
 pub fn (mut h History) pop_redo() ?GroupView {
+	if h.stage_t != -1 {
+		return none
+	}
 	return h.stacks[1].pop()
 }
 
@@ -448,6 +492,10 @@ pub fn (mut h History) clear() {
 	h.stacks[0].reset()
 	h.stacks[1].reset()
 	h.prepared = false
+	h.stage_t = -1
+	h.stage_n = 0
+	h.stage_b = 0
+	h.stage_over = false
 }
 
 pub fn (h &History) undo_len() int {
@@ -458,7 +506,7 @@ pub fn (h &History) redo_len() int {
 	return int(h.stacks[1].grp_next - h.stacks[1].grp_first)
 }
 
-// Kapasite ya da grup tablosu baskısıyla kaybolan ve tek başına sığmayan grupların toplamı.
+// Halka baskısı ya da tek başına sığmayan grup yüzünden kaybolan grupların toplamı.
 pub fn (h &History) dropped_groups() u64 {
 	return h.stacks[0].dropped + h.stacks[1].dropped
 }

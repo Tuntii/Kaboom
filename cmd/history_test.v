@@ -340,3 +340,25 @@ fn hist_bits(f f32) u64 {
 fn hist_f32(b u64) f32 {
 	return math.f32_from_bits(u32(b))
 }
+
+// Büyük açık grup, önceki tamamlanmış grubu silmemeli: G0 sağ kalır ve geri alınabilir.
+fn test_oversized_group_keeps_older_group() {
+	region, mut w, mut h := hist_env(8, 8)
+	defer {
+		memory.release(region)
+	}
+	e := w.spawn() or { panic('spawn') }
+	assert w.add_component(e, ecs.transform_id) == .ok
+	assert hist_step(mut h, mut w, set_cmd(e, 0, 1.0)).status == .ok
+	h.begin_group()
+	for i in 2 .. 22 {
+		hist_step(mut h, mut w, set_cmd(e, 0, f32(i)))
+	}
+	h.end_group()
+	assert h.undo_len() == 1
+	assert h.dropped_groups() == 1
+	g := h.pop_undo() or { panic('pop') }
+	// G0 yalnızca tek set'ti: eski değer 0.0.
+	assert g.block_count() == 1
+	assert g.block(0)[0].value == hist_bits(0.0)
+}
