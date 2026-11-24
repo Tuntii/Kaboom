@@ -348,6 +348,10 @@ pub fn (mut c Context) interact(id u32, focusable bool) Interaction {
 			dragging = true
 		}
 	}
+	// Odaktayken Enter/Space etkinleştirir (klavye erişilebilirliği).
+	if focusable && c.focus == id && (c.key_pressed(.enter) || c.key_pressed(.space)) {
+		clicked = true
+	}
 	return Interaction{
 		hovered:  hovered
 		pressed:  c.active == id && c.inp.down[0]
@@ -499,6 +503,16 @@ fn (mut c Context) touch(id u32) int {
 	return h
 }
 
+// Bu karede k tuşu basıldı mı (Input.keys kenar olayları).
+fn (c &Context) key_pressed(k Key) bool {
+	for i in 0 .. c.inp.key_count {
+		if c.inp.keys[i] == k {
+			return true
+		}
+	}
+	return false
+}
+
 // Önceki karenin dikdörtgeni imleci içeriyor mu.
 fn (c &Context) hovered_prev(id u32) bool {
 	r := c.prev_rect(id) or { return false }
@@ -507,14 +521,8 @@ fn (c &Context) hovered_prev(id u32) bool {
 
 // Tab: odaklanabilir kimlikler arasında ileri, Shift+Tab geri (önceki karenin listesi).
 fn (mut c Context) tab_focus() {
-	mut tab := false
-	for i in 0 .. c.inp.key_count {
-		if c.inp.keys[i] == .tab {
-			tab = true
-		}
-	}
 	n := c.focus_prev_n
-	if !tab || n == 0 {
+	if !c.key_pressed(.tab) || n == 0 {
 		return
 	}
 	mut cur := -1

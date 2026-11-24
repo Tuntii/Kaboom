@@ -18,9 +18,10 @@ pub enum Icon {
 	eye
 	warning
 	close
+	check
 }
 
-const icon_n = 15
+const icon_n = 16
 
 // 24×24 ızgara; her yol açık çoklu çizgi.
 struct IconPath {
@@ -42,8 +43,8 @@ fn with_arc(p IconPath, cx f32, cy f32, r f32, a0 f32, a1 f32) IconPath {
 }
 
 pub fn all_icons() []Icon {
-	return [.play, .pause, .step, .undo, .redo, .plus, .trash, .save, .folder, .chevron_right, .chevron_down, .move,
-		.eye, .warning, .close]
+	return [.play, .pause, .step, .undo, .redo, .plus, .trash, .save, .folder, .chevron_right,
+		.chevron_down, .move, .eye, .warning, .close, .check]
 }
 
 // Yay: a0..a1 derece arası 12 parçalı çoklu çizgi.
@@ -59,26 +60,61 @@ fn arc(cx f32, cy f32, r f32, a0 f32, a1 f32) []f32 {
 
 fn icon_paths(ic Icon) []IconPath {
 	return match ic {
-		.play { [poly(7, 5, 19, 12, 7, 19, 7, 5)] }
-		.pause { [poly(8, 5, 8, 19), poly(16, 5, 16, 19)] }
-		.step { [poly(5, 5, 15, 12, 5, 19, 5, 5), poly(19, 5, 19, 19)] }
-		.undo { [poly(9, 5, 4, 10, 9, 15), with_arc(poly(4, 10, 13, 10), 13, 15, 5, -90, 90)] }
-		.redo { [poly(15, 5, 20, 10, 15, 15), with_arc(poly(20, 10, 11, 10), 11, 15, 5, -90, -270)] }
-		.plus { [poly(12, 5, 12, 19), poly(5, 12, 19, 12)] }
-		.trash { [poly(4, 7, 20, 7), poly(6, 7, 7, 20, 17, 20, 18, 7), poly(9, 7, 9, 4, 15, 4, 15, 7)] }
-		.save { [poly(5, 4, 16, 4, 19, 7, 19, 20, 5, 20, 5, 4), poly(9, 20, 9, 14, 15, 14, 15, 20)] }
-		.folder { [poly(3, 6, 10, 6, 12, 8, 21, 8, 21, 19, 3, 19, 3, 6)] }
-		.chevron_right { [poly(9, 6, 15, 12, 9, 18)] }
-		.chevron_down { [poly(6, 9, 12, 15, 18, 9)] }
-		.move {
-			[poly(12, 3, 12, 21), poly(3, 12, 21, 12), poly(9, 6, 12, 3, 15, 6), poly(9, 18, 12, 21, 15, 18),
-				poly(6, 9, 3, 12, 6, 15), poly(18, 9, 21, 12, 18, 15)]
+		.play {
+			[poly(7, 5, 19, 12, 7, 19, 7, 5)]
 		}
-		.eye { [poly(2, 12, 6, 7, 12, 6, 18, 7, 22, 12, 18, 17, 12, 18, 6, 17, 2, 12), IconPath{
-			pts: arc(12, 12, 3, 0, 360)
-		}] }
-		.warning { [poly(12, 4, 21, 20, 3, 20, 12, 4), poly(12, 10, 12, 14), poly(12, 17, 12, 17.5)] }
-		.close { [poly(6, 6, 18, 18), poly(18, 6, 6, 18)] }
+		.pause {
+			[poly(8, 5, 8, 19), poly(16, 5, 16, 19)]
+		}
+		.step {
+			[poly(5, 5, 15, 12, 5, 19, 5, 5), poly(19, 5, 19, 19)]
+		}
+		.undo {
+			[poly(9, 5, 4, 10, 9, 15), with_arc(poly(4, 10, 13, 10), 13, 15, 5, -90, 90)]
+		}
+		.redo {
+			[poly(15, 5, 20, 10, 15, 15), with_arc(poly(20, 10, 11, 10), 11, 15, 5, -90, -270)]
+		}
+		.plus {
+			[poly(12, 5, 12, 19), poly(5, 12, 19, 12)]
+		}
+		.trash {
+			[poly(4, 7, 20, 7), poly(6, 7, 7, 20, 17, 20, 18, 7),
+				poly(9, 7, 9, 4, 15, 4, 15, 7)]
+		}
+		.save {
+			[poly(5, 4, 16, 4, 19, 7, 19, 20, 5, 20, 5, 4), poly(9, 20, 9, 14, 15, 14, 15, 20)]
+		}
+		.folder {
+			[poly(3, 6, 10, 6, 12, 8, 21, 8, 21, 19, 3, 19, 3, 6)]
+		}
+		.chevron_right {
+			[poly(9, 6, 15, 12, 9, 18)]
+		}
+		.chevron_down {
+			[poly(6, 9, 12, 15, 18, 9)]
+		}
+		.move {
+			[poly(12, 3, 12, 21), poly(3, 12, 21, 12), poly(9, 6, 12, 3, 15, 6),
+				poly(9, 18, 12, 21, 15, 18), poly(6, 9, 3, 12, 6, 15),
+				poly(18, 9, 21, 12, 18, 15)]
+		}
+		.eye {
+			[poly(2, 12, 6, 7, 12, 6, 18, 7, 22, 12, 18, 17, 12, 18, 6, 17, 2, 12),
+				IconPath{
+					pts: arc(12, 12, 3, 0, 360)
+				}]
+		}
+		.warning {
+			[poly(12, 4, 21, 20, 3, 20, 12, 4), poly(12, 10, 12, 14),
+				poly(12, 17, 12, 17.5)]
+		}
+		.close {
+			[poly(6, 6, 18, 18), poly(18, 6, 6, 18)]
+		}
+		.check {
+			[poly(4, 12, 9, 17, 20, 6)]
+		}
 	}
 }
 

@@ -6,7 +6,7 @@ fn test_every_icon_has_ink() {
 	h := a.height()
 	pix := a.pixels()
 	icons := [Icon.play, .pause, .step, .undo, .redo, .plus, .trash, .save, .folder, .chevron_right,
-		.chevron_down, .move, .eye, .warning, .close]
+		.chevron_down, .move, .eye, .warning, .close, .check]
 	for ic in icons {
 		g := a.icon(ic)
 		sz := int(g.x1)

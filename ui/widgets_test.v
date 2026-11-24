@@ -70,6 +70,7 @@ mut:
 	size    f32
 	hv      f32
 	clicks  int
+	enabled bool
 }
 
 fn wgt_scroll_of(c &Context, id u32) f32 {
@@ -352,7 +353,7 @@ fn test_widget_frame_has_zero_heap_allocs() {
 		c.splitter('sp', mut &tp.size, 100, 400)
 		c.separator()
 		c.statusbar_begin()
-		c.text('durum', .caption, text_secondary)
+		c.statusbar_text('durum')
 		c.statusbar_end()
 	}
 	mut press := press_at(5, 5)
@@ -366,4 +367,96 @@ fn test_widget_frame_has_zero_heap_allocs() {
 		}
 	}
 	assert memory.heap_alloc_count() == before
+}
+
+fn wgt_count_glyph_uv(l &DrawList, u0 f32, v0 f32) u32 {
+	mut n := u32(0)
+	for i in 0 .. l.len() {
+		cmd := l.at(i)
+		if cmd.kind == u32(DrawKind.glyph) && cmd.u0 == u0 && cmd.v0 == v0 {
+			n++
+		}
+	}
+	return n
+}
+
+// Odaktaki düğme Enter ile bir kez etkinleşir; devre dışıysa etkinleşmez.
+fn test_enter_activates_focused_button() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := Tally{
+		enabled: true
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.button_ex('ok', .primary, tp.enabled) {
+			tp.ok++
+		}
+	}
+	mut tab := Input{}
+	tab.keys[0] = .tab
+	tab.key_count = 1
+	wgt_frame(mut c, tab, body)
+	assert c.focused_id() == c.id('ok')
+
+	mut enter := Input{}
+	enter.keys[0] = .enter
+	enter.key_count = 1
+	wgt_frame(mut c, enter, body)
+	assert t.ok == 1
+	wgt_frame(mut c, Input{}, body)
+	assert t.ok == 1
+
+	// Odakta kalan düğme devre dışı kalırsa Enter etkinleştirmez.
+	t.enabled = false
+	wgt_frame(mut c, enter, body)
+	assert t.ok == 1
+}
+
+// Odaktaki onay kutusu Space ile çevrilir.
+fn test_space_toggles_focused_checkbox() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := Tally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.checkbox('cb', mut &tp.value) {
+			tp.changes++
+		}
+	}
+	mut tab := Input{}
+	tab.keys[0] = .tab
+	tab.key_count = 1
+	wgt_frame(mut c, tab, body)
+	assert c.focused_id() == c.id('cb')
+	assert t.changes == 0
+
+	mut space := Input{}
+	space.keys[0] = .space
+	space.key_count = 1
+	wgt_frame(mut c, space, body)
+	assert t.value
+	assert t.changes == 1
+	wgt_frame(mut c, space, body)
+	assert !t.value
+	assert t.changes == 2
+}
+
+// İşaretli onay kutusu check ikonunu, işaretsiz olan hiç ikon çizmez.
+fn test_checked_checkbox_draws_check_glyph() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	check := atl.icon(.check)
+
+	mut on := true
+	c.begin(Input{}, 400, 300, 1.0)
+	c.checkbox('cb', mut &on)
+	l_on := c.end()
+	assert wgt_count_glyph_uv(l_on, check.u0, check.v0) == 1
+
+	mut off := false
+	c.begin(Input{}, 400, 300, 1.0)
+	c.checkbox('cb', mut &off)
+	l_off := c.end()
+	assert wgt_count_glyph_uv(l_off, check.u0, check.v0) == 0
 }

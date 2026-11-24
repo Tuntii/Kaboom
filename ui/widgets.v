@@ -84,15 +84,31 @@ pub fn (mut c Context) checkbox(label string, mut value &bool) bool {
 		gap:         space_2
 		align_cross: .center
 	})
-	// Kutu işareti yok: işaretli kutu dolu vurgu rengiyle gösterilir.
-	c.leaf(.plain, Box{
-		width:    fixed(icon_size)
-		height:   fixed(icon_size)
-		bg:       if checked { accent } else { surface_2 }
-		border:   border_strong
-		border_w: 1
-		radius:   radius_control
-	})
+	// İşaretli kutu: dolu vurgu ve check ikonu; işaretsiz kutu yalnızca çerçeve.
+	mut idx := -1
+	if checked {
+		idx = c.leaf(.icon, Box{
+			width:    fixed(icon_size)
+			height:   fixed(icon_size)
+			bg:       accent
+			border:   accent
+			border_w: 1
+			radius:   radius_control
+		})
+		if idx >= 0 {
+			c.nodes[idx].icon = .check
+			c.nodes[idx].color = accent_text
+		}
+	} else {
+		c.leaf(.plain, Box{
+			width:    fixed(icon_size)
+			height:   fixed(icon_size)
+			bg:       surface_2
+			border:   border_strong
+			border_w: 1
+			radius:   radius_control
+		})
+	}
 	c.text(label, .body, text_primary)
 	c.close()
 	return changed
@@ -211,7 +227,7 @@ pub fn (mut c Context) toolbar_end() {
 	c.close()
 }
 
-// Durum çubuğu: öğeler çağıran tarafından .caption ve text_secondary ile çizilir.
+// Durum çubuğu kapsayıcısı; içerik statusbar_text ile yazılır.
 pub fn (mut c Context) statusbar_begin() {
 	c.open('statusbar', Box{
 		dir:         .row
@@ -226,4 +242,8 @@ pub fn (mut c Context) statusbar_begin() {
 
 pub fn (mut c Context) statusbar_end() {
 	c.close()
+}
+
+pub fn (mut c Context) statusbar_text(s string) {
+	c.text(s, .caption, text_secondary)
 }
