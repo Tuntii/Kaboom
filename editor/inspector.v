@@ -23,6 +23,7 @@ struct InsHit {
 	comp  u16
 	field u16
 	id    u32
+	val   f32 // alan satırında gösterilen değer (sayı alanına verilen, çizimden önce)
 }
 
 // Aralık hatası: varlık + bileşen + alan anahtarıyla; metin sabit tampon (tahsissiz).
@@ -49,7 +50,7 @@ mut:
 	group_comp u16
 }
 
-fn (mut i Inspector) hit(kind u8, comp u16, field u16, id u32) {
+fn (mut i Inspector) hit(kind u8, comp u16, field u16, id u32, val f32) {
 	if i.nhits >= ins_hit_cap {
 		return
 	}
@@ -58,6 +59,7 @@ fn (mut i Inspector) hit(kind u8, comp u16, field u16, id u32) {
 		comp:  comp
 		field: field
 		id:    id
+		val:   val
 	}
 	i.nhits++
 }
@@ -165,7 +167,7 @@ pub fn (mut e Editor) inspector(mut c ui.Context, mut srv protocol.Server) {
 		}
 		cs := reg.component(comp) or { continue }
 		c.push_id(int(comp))
-		e.ins.hit(hit_section, comp, 0, c.id(cs.name))
+		e.ins.hit(hit_section, comp, 0, c.id(cs.name), 0)
 		res := c.section_ex(cs.name, cs.name, ui.SectionOpts{
 			trailing_icon: ui.Icon.trash
 			trailing_tip:  'Bileşeni çıkar'
@@ -187,7 +189,7 @@ pub fn (mut e Editor) inspector(mut c ui.Context, mut srv protocol.Server) {
 		height:  ui.fit()
 		padding: ui.pad_xy(0, ui.space_2)
 	})
-	e.ins.hit(hit_add, 0, 0, c.id('add_component'))
+	e.ins.hit(hit_add, 0, 0, c.id('add_component'), 0)
 	if c.menu_button_ex('add_component', 'Bileşen ekle', ui.grow(), ui.Icon.plus) {
 		for comp in u16(0) .. reg.count() {
 			if w.has(id, comp) {
@@ -213,16 +215,19 @@ pub fn (mut e Editor) inspector(mut c ui.Context, mut srv protocol.Server) {
 fn (mut e Editor) field_row(mut c ui.Context, mut srv protocol.Server, w &ecs.World, id ecs.EntityID, comp u16, cname string, fi u16, f ecs.FieldSchema) {
 	cur := read_f32(w, id, comp, fi) or { return }
 	mut v := cur
-	e.ins.hit(hit_field, comp, fi, c.id(f.name))
 	c.property_row_begin(f.name)
 	res := c.number_field_ex(f.name, mut &v, ui.NumberFieldOpts{
 		unit:     f.unit
 		decimals: 2
 		step:     if f.unit == 'm' { f32(0.1) } else { f32(0.01) }
-		readonly: f.readonly
-		error:    if f.readonly { '' } else { e.ins.err_text(id, comp, fi) }
+		readonly:   f.readonly
+		error:      if f.readonly { '' } else { e.ins.err_text(id, comp, fi) }
+		drag_clamp: f.ranged
+		drag_min:   f32(f.min)
+		drag_max:   f32(f.max)
 	})
 	c.property_row_end()
+	e.ins.hit(hit_field, comp, fi, c.id(f.name), v)
 	if res.drag_started {
 		srv.history_begin_group()
 		e.ins.grouping = true
@@ -294,4 +299,15 @@ fn (mut e Editor) comp_request(mut srv protocol.Server, method string, id ecs.En
 	r.param_entity('entity', id)
 	r.param_str('component', cname)
 	_ = srv.handle_from(r.end(), .editor)
+}
+
+// Son karede bir alan satırında gösterilen değer (sayı alanının çizdiği değerle aynı); yoksa none (testler için).
+pub fn (e &Editor) inspector_shown(comp u16, field u16) ?f32 {
+	for k in 0 .. e.ins.nhits {
+		h := e.ins.hits[k]
+		if h.kind == hit_field && h.comp == comp && h.field == field {
+			return h.val
+		}
+	}
+	return none
 }

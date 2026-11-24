@@ -319,3 +319,31 @@ fn test_external_change_updates_field_when_not_editing() {
 	ins_drag(mut c, mut e, mut srv, r.x + r.w / 2, r.y + r.h / 2, r.x + r.w / 2 + 40)
 	assert ins_field_value(&srv, id, ecs.transform_id, 'x') > 7
 }
+
+// Uzun sürüklemede gösterilen değer (her kare) aralık dışına çıkmaz; dünya değeri de kıstırılır.
+fn test_displayed_value_stays_in_range_during_long_drag() {
+	mut srv := ins_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	id := ins_setup(mut c, mut e, mut srv)
+	r := ins_field_rect(&e, &c, &srv, ecs.sprite_id, 'r')
+	x0 := r.x + r.w / 2
+	y := r.y + r.h / 2
+	ins_frame(mut c, mut e, mut srv, ins_hover(x0, y))
+	ins_frame(mut c, mut e, mut srv, ins_down(x0, y, true))
+	mut x := x0
+	for _ in 0 .. 40 {
+		x += 15
+		ins_frame(mut c, mut e, mut srv, ins_down(x, y, false))
+		shown := e.inspector_shown(ecs.sprite_id, ins_field_index(&srv, ecs.sprite_id, 'r')) or { panic('gösterilen değer yok') }
+		assert shown >= 0 && shown <= 1, 'gösterilen ${shown}'
+		assert ins_field_value(&srv, id, ecs.sprite_id, 'r') <= 1
+	}
+	assert e.inspector_shown(ecs.sprite_id, ins_field_index(&srv, ecs.sprite_id, 'r')) or { panic('yok') } == 1
+	ins_frame(mut c, mut e, mut srv, ins_up(x, y))
+	assert ins_field_value(&srv, id, ecs.sprite_id, 'r') == 1
+}

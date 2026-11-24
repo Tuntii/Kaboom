@@ -447,6 +447,11 @@ pub:
 	max      f32
 	readonly bool   // odaklanmaz, sürüklenmez, düzenlenmez; metin text_muted
 	error    string // çağıranın sahip olduğu metin; kare başına tahsis yok
+	// drag_clamp: yalnız sürüklemenin çıktısı ve Esc başlangıcı [drag_min, drag_max] içine kıstırılır (gösterilen değer dahil).
+	// Yazılı değer kıstırılmaz: çağıran aralık dışını bildirebilir.
+	drag_clamp bool
+	drag_min   f32
+	drag_max   f32
 }
 
 // Sayı alanı: yatay sürükleme değeri değiştirir; tıklayıp bırakma düzenleme moduna geçer.
@@ -595,7 +600,7 @@ fn (mut c Context) num_drag(h int, cur f32, dx f32, o NumberFieldOpts, mut r Num
 	}
 	if h >= 0 && !c.states[h].flag(off_num_drag) {
 		c.states[h].set_flag(off_num_drag, true)
-		c.states[h].set_f32(off_num_v0, cur)
+		c.states[h].set_f32(off_num_v0, drag_bound(cur, o))
 		r.drag_started = true
 	}
 	if h >= 0 && c.key_pressed(.escape) {
@@ -605,7 +610,21 @@ fn (mut c Context) num_drag(h int, cur f32, dx f32, o NumberFieldOpts, mut r Num
 		return c.states[h].f32_at(off_num_v0)
 	}
 	mult := if c.inp.shift { f32(10) } else { f32(1) }
-	return num_clamp(cur + dx * o.step / drag_px_div * mult, o.min, o.max)
+	return drag_bound(num_clamp(cur + dx * o.step / drag_px_div * mult, o.min, o.max), o)
+}
+
+// Sürükleme sınırı (drag_clamp): yalnız sürükleme değerine uygulanır; min/max (yazılı) sınırından bağımsızdır.
+fn drag_bound(v f32, o NumberFieldOpts) f32 {
+	if !o.drag_clamp {
+		return v
+	}
+	if v < o.drag_min {
+		return o.drag_min
+	}
+	if v > o.drag_max {
+		return o.drag_max
+	}
+	return v
 }
 
 // Rengin opaklığını a (0..1) ile çarpar; menü açılışı için.

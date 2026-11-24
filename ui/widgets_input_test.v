@@ -1396,3 +1396,56 @@ fn test_menu_gone_releases_keyboard_next_frame() {
 	c.end()
 	assert clicks == 1
 }
+
+// drag_clamp: sürükleme her karede [drag_min, drag_max] içinde kalır (gösterilen değer dahil); eşik ve sınır karesinde de.
+fn test_drag_clamp_holds_range_every_frame() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 0.5
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		tp.last = c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			step:       1
+			drag_clamp: true
+			drag_min:   0
+			drag_max:   1
+		})
+	}
+	nf_once(mut c, Input{}, body)
+	nf_once(mut c, mouse_at(10, 10), body)
+	nf_once(mut c, press_at(10, 10), body)
+	for k in 1 .. 6 {
+		nf_once(mut c, nf_held(10 + f32(k) * 10, 10), body)
+		assert t.value == 1, 'kare ${k}: ${t.value}'
+		assert in_fmt(t.value, 2) == '1.00'
+	}
+	nf_once(mut c, release_at(60, 10), body)
+	assert t.value == 1
+}
+
+// drag_clamp yazılı değeri kıstırmaz: aralık dışı yazı olduğu gibi döner (çağıran bildirir).
+fn test_typed_value_unclamped_with_drag_clamp() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.number_field_ex('n', mut &tp.value, NumberFieldOpts{
+			step:       1
+			drag_clamp: true
+			drag_min:   0
+			drag_max:   1
+		}).committed {
+			tp.enter++
+		}
+	}
+	wgt_frame(mut c, mouse_at(10, 10), body)
+	wgt_frame(mut c, press_at(10, 10), body)
+	wgt_frame(mut c, release_at(10, 10), body)
+	wgt_frame(mut c, in_text('5'), body)
+	wgt_frame(mut c, in_key(.enter), body)
+	assert t.enter == 1
+	assert t.value == 5
+}
