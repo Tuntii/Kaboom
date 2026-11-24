@@ -365,3 +365,53 @@ fn test_toolbar_truncates_long_name() {
 	assert r.w <= ui.file_name_max_w + 1e-3, 'ad kutusu genisligi: ${r.w}'
 	assert r.w > 0
 }
+
+// Ajan scene.load (editor kendi yuklemesi degil): sonraki editor karesi tum sprite'lari kadrajlar.
+fn test_agent_load_frames_all() {
+	dir := os.temp_dir().replace('\\', '/')
+	path := '${dir}/vcore_m4c11_agent_${os.getpid()}.vscene'
+	defer {
+		os.rm(path) or {}
+	}
+	mut writer := edt_server()
+	for line in edt_sprite_lines() {
+		writer.handle(line) or { panic('yanit yok') }
+	}
+	writer.handle('{"jsonrpc":"2.0","id":9,"method":"scene.save","params":{"path":"${path}"}}') or { panic('yanit yok') }
+	writer.close()
+
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.cam.view_h == cam_view_h, 'kamera yuklemeden once degismemeli'
+	srv.handle('{"jsonrpc":"2.0","id":10,"method":"scene.load","params":{"path":"${path}"}}') or { panic('yanit yok') }
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	fr := edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.cam.view_h < cam_view_h, 'agent load should zoom the camera: ${e.cam.view_h}'
+	assert edt_close(fr.cam_cx, -1.75) && edt_close(fr.cam_cy, 0.25), 'agent load should frame all sprites: ${fr.cam_cx},${fr.cam_cy}'
+}
+
+// Yol kopyasi: ad ve ipucu yolun her degisiminde yenilenir; kopya ile yol her karede eslesir.
+fn test_name_copy_tracks_path_changes() {
+	mut srv := edt_server()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	e.path.set('a/b.vscene')
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.shown_str() == 'a/b.vscene'
+	e.path.set('c/d.vscene')
+	edt_frame(mut c, mut e, mut srv, ui.Input{ mouse_x: -1, mouse_y: -1 })
+	assert e.shown_str() == 'c/d.vscene', 'copy should refresh: ${e.shown_str()}'
+	assert label_of(e.shown_str()) == 'd.vscene'
+}

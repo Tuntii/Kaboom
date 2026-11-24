@@ -12,6 +12,7 @@ const cam_view_h = f32(40)
 // Kare süresi EMA'sı: yeni kare payı; 0.1 ≈ son ~10 karenin ortalaması.
 const fps_alpha = f32(0.1)
 const status_cap = 160
+const shown_cap = 256 // yol alanıyla aynı boyut (ui.TextBuf)
 
 // Bir karenin sonucu: cmd_main sahne quad'larını bu kamerayla ve bu dikdörtgende çizer.
 pub struct EditorFrame {
@@ -55,6 +56,9 @@ mut:
 	flash_len  int
 	flash_until f64
 	fit_pending bool // yükleme sonrası: sahne dikdörtgeni bilindiğinde tüm sprite'lar kadrajlanır
+	loads_seen  u64       // son görülen başarılı scene.load sayısı (editör ya da ajan yüklemesi)
+	shown       [shown_cap]u8 // ad ve ipucu için yol kopyası: yalnız yol değişince yenilenir (kare içinde tutarlı ölçü)
+	shown_len   int
 }
 
 // Yeni editör: panel genişlikleri 240/300, kamera 0,0 görünüm yüksekliği 40, seçim yok.
@@ -96,7 +100,6 @@ fn (mut e Editor) load_scene(mut srv protocol.Server) {
 		return
 	}
 	e.saved_count = srv.change_count()
-	e.fit_pending = true
 }
 
 // Hata satırı (kırmızı durum metni): yüklemeden bağımsız kurulum hataları da buradan gösterilir.
@@ -143,6 +146,12 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 			e.load_scene(mut srv)
 		}
 	}
+	// Her başarılı scene.load (editör, ajan ya da açılış) bir kez kadrajlanır.
+	n := srv.load_count()
+	if n != e.loads_seen {
+		e.loads_seen = n
+		e.fit_pending = true
+	}
 	e.measure(c.input().time_ms)
 	e.now_ms = c.input().time_ms
 	// Araç çubuğu (geri al/yinele, dosya alanı) gövdeden önce: geri alma seçimi, ölü seçim düşmeden remap eder.
@@ -171,7 +180,7 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 		e.step(mut srv)
 	}
 	// F: seçiliyi kadrajlar; seçim yoksa hepsini.
-	if scene.w > 0 && scene.h > 0 && c.shortcut(.f) {
+	if e.sv.fields_ok && scene.w > 0 && scene.h > 0 && c.shortcut(.f) {
 		if !e.frame_selected(srv.world(), scene) {
 			e.frame_all(srv.world(), scene)
 		}
@@ -224,18 +233,40 @@ fn (mut e Editor) toolbar(mut c ui.Context, mut srv protocol.Server) {
 	c.toolbar_end()
 }
 
-// Araç çubuğunda görünen ad: yolun son bileşeni (ayırıcı / ya da \ sonrası); tam yol ipucundadır.
+// Araç çubuğunda görünen ad (yol değişince kopya yenilenir, bkz. sync_shown).
 fn (e &Editor) file_label() string {
-	if e.path.len == 0 {
+	return label_of(e.path.str())
+}
+
+// Ad: yolun son bileşeni (ayırıcı / ya da \ sonrası); boş yolda "Yeni sahne". Tahsissiz görünüm.
+fn label_of(p string) string {
+	if p.len == 0 {
 		return 'Yeni sahne'
 	}
 	mut at := 0
-	for i in 0 .. e.path.len {
-		if e.path.data[i] == `/` || e.path.data[i] == `\\` {
+	for i in 0 .. p.len {
+		if p[i] == `/` || p[i] == `\\` {
 			at = i + 1
 		}
 	}
-	return unsafe { tos(&e.path.data[at], e.path.len - at) }
+	return unsafe { tos(p.str + at, p.len - at) }
+}
+
+// Çizimde kullanılan yol kopyası (ad ve tam yol ipucu). Yol değişmişse yeniden kopyalanır; tahsis yok.
+fn (mut e Editor) sync_shown() {
+	p := e.path.str()
+	if p == e.shown_str() {
+		return
+	}
+	for i in 0 .. p.len {
+		e.shown[i] = p[i]
+	}
+	e.shown_len = p.len
+}
+
+// Kopyalanmış yol; boş ya da henüz eşitlenmemişse "".
+fn (e &Editor) shown_str() string {
+	return unsafe { tos(&e.shown[0], e.shown_len) }
 }
 
 // Gövde: sol panel, sahne alanı ve sağ panel; ayırıcılar genişlikleri değiştirir.

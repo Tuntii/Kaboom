@@ -290,15 +290,17 @@ fn (mut e Editor) file_bar(mut c ui.Context, mut srv protocol.Server) {
 	if e.dirty(srv.change_count()) {
 		c.text('•', .body_strong, ui.warning)
 	}
-	// Ad kutusu: uzun ad … ile kırpılır; tam yol ipucunda (ad kutusunun üstünde bekleyince).
+	// Ad kutusu: uzun ad … ile kırpılır; tam yol ipucunda (ad kutusunun üstünde bekleyince). Ad ve ipucu aynı kopyadan
+	// okunur: kare içinde yol sonradan değişse de çizilen metin ile ölçüsü eşleşir.
+	e.sync_shown()
 	c.open('file_name', ui.Box{
 		width:  ui.fit()
 		height: ui.fit()
 	})
-	c.text_trunc(e.file_label(), .body_strong, ui.text_primary, ui.file_name_max_w)
+	c.text_trunc(label_of(e.shown_str()), .body_strong, ui.text_primary, ui.file_name_max_w)
 	c.close()
-	if e.path.len > 0 {
-		c.tooltip(e.path.str())
+	if e.shown_len > 0 {
+		c.tooltip(e.shown_str())
 	}
 	if e.file_field != .idle {
 		if e.focus_next {

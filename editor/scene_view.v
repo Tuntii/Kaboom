@@ -312,6 +312,9 @@ fn sprite_box(w &ecs.World, f SceneFields) (bool, f32, f32, f32, f32) {
 
 // Kadraj (F tuşu ve yükleme): tüm sprite'lar. Sprite yoksa kamera değişmez.
 fn (mut e Editor) frame_all(w &ecs.World, r ui.Rect) {
+	if !e.sv.fields_ok {
+		return
+	}
 	ok, x0, y0, x1, y1 := sprite_box(w, e.sv.fields)
 	if ok {
 		e.cam.frame_box(r, x0, y0, x1, y1)
@@ -320,6 +323,9 @@ fn (mut e Editor) frame_all(w &ecs.World, r ui.Rect) {
 
 // Kadraj (F tuşu): seçili varlığın sprite kutusu (sprite yoksa konumu). Seçim yoksa false: çağıran tümünü kadrajlar.
 fn (mut e Editor) frame_selected(w &ecs.World, r ui.Rect) bool {
+	if !e.sv.fields_ok {
+		return false
+	}
 	has, id := e.sv.selected()
 	if !has {
 		return false

@@ -664,6 +664,7 @@ fn (mut s Server) scene_load(p Val) !Val {
 	}
 	// Kurulum komutları geçmişe yazılmış olabilir: yüklenen sahne tek geri alma adımı değildir.
 	s.engine.history.clear()
+	s.loads++
 	res := obj()
 	res.set('entities', out)
 	return res

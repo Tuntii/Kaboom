@@ -69,6 +69,8 @@ mut:
 	capture ?fn (path string) !(int, int)
 	// Dünya değişiklik sayacı: başarıyla uygulanan her komutta, geri al/yinelede ve sim.reset'te artar.
 	changes u64
+	// Başarılı scene.load sayacı: editör bunu izleyip yüklemeden sonra kadrajlar (ajan yüklemeleri dahil).
+	loads u64
 }
 
 // Bölgeyi cfg.bytes_needed kadar rezerve eder, istek arenasını ayırır ve Sim'i kurar.
@@ -143,6 +145,11 @@ pub fn (s &Server) tick() u64 {
 // Kaydedilmemiş değişiklik tespiti için: değişmediyse dünya aynıdır.
 pub fn (s &Server) change_count() u64 {
 	return s.changes
+}
+
+// Başarılı scene.load sayısı (editör yüklemeyi kare başında algılar).
+pub fn (s &Server) load_count() u64 {
+	return s.loads
 }
 
 // Geri al ve yineleme yığınlarının grup sayıları (buton etkinliği için).
