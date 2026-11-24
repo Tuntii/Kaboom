@@ -254,6 +254,7 @@ fn run_gallery(args []string) {
 			}
 			render.read_pixels(0, 0, fw, fh, render.gl_rgba, render.gl_unsigned_byte, px.data)
 			render.unbind_fbo()
+			render.make_opaque(mut px)
 			image.write_png(o.screenshot, fw, fh, px, true) or {
 				eprintln('vcore: ${err}')
 				exit(1)

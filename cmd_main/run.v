@@ -107,6 +107,7 @@ fn capture_frame(path string) !(int, int) {
 	// FBO okuması arka tamponla aynı satır sırasını (alt-sol köken) verir; çevirme write_png'deki flip_y ile yapılır.
 	render.read_pixels(0, 0, w, h, render.gl_rgba, render.gl_unsigned_byte, px.data)
 	render.unbind_fbo()
+	render.make_opaque(mut px)
 	image.write_png(path, w, h, px, true)!
 	return w, h
 }

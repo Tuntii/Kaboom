@@ -42,7 +42,17 @@ pub fn Fbo.new(w int, h int) !Fbo {
 
 // Çizimleri bu FBO'ya yönlendirir. Çağıran unbind_fbo ile geri almalı.
 pub fn (f &Fbo) bind() {
+	// fb == 0 olsaydı çizim sessizce ekran arka tamponuna giderdi.
+	assert f.fb != 0, 'Fbo.bind: boyutlandirilmamis FBO'
 	bind_framebuffer(gl_framebuffer, f.fb)
+}
+
+// Yakalama pikselleri opak olmalı: FBO RGBA8'dir, ekran arka tamponunda alfa yoktur; kenar karışımı
+// alfayı 255'in altına indirebilir. PNG'ye yazmadan önce her alfa baytı 255 yapılır.
+pub fn make_opaque(mut px []u8) {
+	for i := 3; i < px.len; i += 4 {
+		px[i] = 255
+	}
 }
 
 // Çizimleri ekran arka tamponuna (framebuffer 0) geri yönlendirir.
