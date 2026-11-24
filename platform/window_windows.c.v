@@ -107,6 +107,7 @@ mut:
 	wheel      f32
 	vkeys      [16]u16
 	vkey_count int
+	vkey_repeat [16]int
 	chars      [32]u32
 	char_count int
 	ctrl       int
@@ -143,6 +144,14 @@ fn wnd_proc(hwnd voidptr, msg u32, wp usize, lp isize) isize {
 	if msg == wm_setcursor && (lp & 0xFFFF) == 1 { // HTCLIENT
 		C.SetCursor(C.vcore_cursor_load())
 		return 1
+	}
+	// F10 ve tek Alt: DefWindowProc menü modal döngüsünü (SC_KEYMENU) açar ve kare döngüsü donar.
+	if (msg == 0x0104 || msg == 0x0105) && (wp == 0x79 || wp == 0x12) {
+		record_input(hwnd, msg, wp, lp)
+		return 0
+	}
+	if msg == 0x0112 && (wp & 0xFFF0) == 0xF100 { // WM_SYSCOMMAND SC_KEYMENU
+		return 0
 	}
 	record_input(hwnd, msg, wp, lp)
 	return C.DefWindowProcW(hwnd, msg, wp, lp)
@@ -185,9 +194,10 @@ fn record_input(hwnd voidptr, msg u32, wp usize, lp isize) {
 		0x020A { // WM_MOUSEWHEEL: delta wParam'ın işaretli üst kelimesinde, çentik 120
 			p.wheel += f32(i16((wp >> 16) & 0xFFFF)) / 120.0
 		}
-		0x0100, 0x0104 { // WM_KEYDOWN, WM_SYSKEYDOWN; tekrarlar (bit 30) kare listesine girmez
-			if (lp >> 30) & 1 == 0 && p.vkey_count < 16 {
+		0x0100, 0x0104 { // WM_KEYDOWN, WM_SYSKEYDOWN; tekrarlar (bit 30) repeat bayrağıyla girer
+			if p.vkey_count < 16 {
 				p.vkeys[p.vkey_count] = u16(wp)
+				p.vkey_repeat[p.vkey_count] = int((lp >> 30) & 1)
 				p.vkey_count++
 			}
 		}
@@ -365,6 +375,7 @@ pub fn (mut w Window) input() InputFrame {
 	}
 	for i in 0 .. p.vkey_count {
 		f.vkeys[i] = p.vkeys[i]
+		f.vkey_repeat[i] = p.vkey_repeat[i] != 0
 	}
 	for i in 0 .. p.char_count {
 		f.chars[i] = p.chars[i]

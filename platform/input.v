@@ -12,6 +12,7 @@ pub mut:
 	wheel      f32
 	vkeys      [16]u16
 	vkey_count int
+	vkey_repeat [16]bool // vkeys[i] otomatik tekrar mı (bit 30)
 	chars      [32]u32
 	char_count int
 	ctrl       bool

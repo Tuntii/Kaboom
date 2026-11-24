@@ -136,3 +136,52 @@ fn test_gl_proc_null_for_unknown_name() {
 	defer { w.close() }
 	assert gl_proc(c'vcore_yok_boyle_bir_fonksiyon') == unsafe { nil }
 }
+
+// Tekrar (bit 30) düşmez: kare listesine repeat bayrağıyla girer.
+fn test_key_repeat_delivered_with_flag() {
+	mut w := Window.new(WindowConfig{ visible: false, width: 64, height: 64 }) or {
+		eprintln('atlandi: GL yok: ${err}')
+		return
+	}
+	defer { w.close() }
+	C.SendMessageW(w.hwnd, 0x0100, 0x08, 0)
+	C.SendMessageW(w.hwnd, 0x0100, 0x08, isize(0x40000000))
+	f := w.input()
+	assert f.vkey_count == 2
+	assert f.vkeys[0] == 0x08 && !f.vkey_repeat[0]
+	assert f.vkeys[1] == 0x08 && f.vkey_repeat[1]
+}
+
+// F10 sistem tuşu olarak kaydedilir ve DefWindowProc'a gitmez; çağrı 0 döner.
+fn test_f10_sys_key_consumed_and_recorded() {
+	mut w := Window.new(WindowConfig{ visible: false, width: 64, height: 64 }) or {
+		eprintln('atlandi: GL yok: ${err}')
+		return
+	}
+	defer { w.close() }
+	assert C.SendMessageW(w.hwnd, 0x0104, 0x79, 0) == 0
+	assert C.SendMessageW(w.hwnd, 0x0105, 0x79, 0) == 0
+	f := w.input()
+	assert f.vkey_count == 1 && f.vkeys[0] == 0x79
+}
+
+// Tek Alt'ın bırakılması menü modal döngüsünü açmaz.
+fn test_bare_alt_sys_keys_consumed() {
+	mut w := Window.new(WindowConfig{ visible: false, width: 64, height: 64 }) or {
+		eprintln('atlandi: GL yok: ${err}')
+		return
+	}
+	defer { w.close() }
+	assert C.SendMessageW(w.hwnd, 0x0104, 0x12, 0) == 0
+	assert C.SendMessageW(w.hwnd, 0x0105, 0x12, 0) == 0
+}
+
+// SC_KEYMENU (0xF100) kendi başına 0 döner; DefWindowProc menü döngüsünü açamaz.
+fn test_sc_keymenu_consumed() {
+	mut w := Window.new(WindowConfig{ visible: false, width: 64, height: 64 }) or {
+		eprintln('atlandi: GL yok: ${err}')
+		return
+	}
+	defer { w.close() }
+	assert C.SendMessageW(w.hwnd, 0x0112, 0xF100, 0) == 0
+}

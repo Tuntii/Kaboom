@@ -17,6 +17,7 @@ typedef struct {
 	float wheel;
 	unsigned short vkeys[16];
 	int vkey_count;
+	int vkey_repeat[16];
 	unsigned int chars[32];
 	int char_count;
 	int ctrl;

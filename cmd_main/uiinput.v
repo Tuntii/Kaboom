@@ -47,6 +47,7 @@ fn to_ui_input(f platform.InputFrame, scale f32, now_ms f64) ui.Input {
 		k := vk_to_key(f.vkeys[i])
 		if k != .none && inp.key_count < inp.keys.len {
 			inp.keys[inp.key_count] = k
+			inp.key_repeat[inp.key_count] = f.vkey_repeat[i]
 			inp.key_count++
 		}
 	}
