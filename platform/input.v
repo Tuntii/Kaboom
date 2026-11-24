@@ -18,6 +18,7 @@ pub mut:
 	ctrl       bool
 	shift      bool
 	alt        bool
+	space      bool // Boşluk basılı (tutulan durum)
 	focused    bool
 }
 

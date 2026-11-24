@@ -111,6 +111,7 @@ fn (mut s Server) apply_blocks(mut blocks [][]cmd.Command) (u32, u32, []IdPair) 
 				continue
 			}
 			ok++
+			s.changes++
 			if c.kind == .spawn && r.entity != c.entity {
 				pairs << IdPair{
 					old: c.entity

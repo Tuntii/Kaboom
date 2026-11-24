@@ -146,13 +146,18 @@ fn script_mouse(ctx &ui.Context, mut inp ui.Input, o GalleryOpts, frame int) {
 
 // Vitrin karesinin çizim dizisi: ekran ve ekran görüntüsü aynı kodu paylaşır.
 fn draw_gallery_frame(mut rend render.Renderer, mut ur render.UiRenderer, scene ui.Rect, list &ui.DrawList, fw int, fh int, scale f32, n u32) {
+	draw_frame(mut rend, mut ur, scene, render.Camera{ view_h: gallery_view_h }, list, fw, fh, scale, n)
+}
+
+// Ortak kare: yüzey zemini, sahne alanı (kamera ile) ve arayüz. Editör de bunu kullanır.
+fn draw_frame(mut rend render.Renderer, mut ur render.UiRenderer, scene ui.Rect, cam render.Camera, list &ui.DrawList, fw int, fh int, scale f32, n u32) {
 	render.viewport(0, 0, fw, fh)
 	c := u32(ui.surface_0)
 	render.clear_color(f32((c >> 24) & 0xFF) / 255, f32((c >> 16) & 0xFF) / 255, f32((c >> 8) & 0xFF) / 255, 1.0)
 	render.clear(render.gl_color_buffer_bit)
 	if scene.w > 0 && scene.h > 0 {
 		x, y, w, h := to_physical(scene, scale)
-		rend.draw_viewport(render.Camera{ view_h: gallery_view_h }, x, y, w, h, fh, n)
+		rend.draw_viewport(cam, x, y, w, h, fh, n)
 	}
 	ur.draw(list, fw, fh)
 }

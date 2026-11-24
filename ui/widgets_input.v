@@ -350,6 +350,14 @@ fn (mut c Context) end_num(id u32) {
 	}
 }
 
+// Aralık denetimi: min == max == 0 sınırsız (num_clamp ile aynı kural).
+fn num_in_range(v f32, min f32, max f32) bool {
+	if min == 0 && max == 0 {
+		return true
+	}
+	return v >= min && v <= max
+}
+
 // min == max == 0 sınırsız.
 fn num_clamp(v f32, min f32, max f32) f32 {
 	if min == 0 && max == 0 {
@@ -435,6 +443,8 @@ pub mut:
 	drag_ended     bool // sürükleme normal bitti (fare bırakıldı)
 	drag_cancelled bool // sürükleme sırasında Esc: değer sürükleme başlangıcına döndü
 	committed      bool // yazılı düzenleme Enter ya da odak kaybıyla uygulandı
+	rejected       bool // Enter'da aralık dışı yazılı değer (reject): düzenlemede kalındı, değer değişmedi
+	escaped        bool // Esc ile düzenleme bırakıldı ya da aralık dışı değerle odak kaybı: bekleyen hata temizlenmeli
 }
 
 // Sayı alanı seçenekleri. min == max == 0 sınırsız; error doluysa alan danger kenarlıkla ve altında hata satırıyla çizilir.
@@ -447,6 +457,13 @@ pub:
 	max      f32
 	readonly bool   // odaklanmaz, sürüklenmez, düzenlenmez; metin text_muted
 	error    string // çağıranın sahip olduğu metin; kare başına tahsis yok
+	// drag_clamp: yalnız sürüklemenin çıktısı ve Esc başlangıcı [drag_min, drag_max] içine kıstırılır (gösterilen değer dahil).
+	// Yazılı değer kıstırılmaz: çağıran aralık dışını bildirebilir.
+	drag_clamp bool
+	drag_min   f32
+	drag_max   f32
+	// reject: yazılı değer [min, max] dışındaysa Enter onu uygulamaz; alan düzenlemede kalır (rejected). min/max verilmelidir.
+	reject bool
 }
 
 // Sayı alanı: yatay sürükleme değeri değiştirir; tıklayıp bırakma düzenleme moduna geçer.
@@ -513,12 +530,23 @@ pub fn (mut c Context) number_field_ex(label string, mut value &f32, o NumberFie
 		c.num_cur = nc
 		// Enter, Esc ya da odak kaybı düzenlemeyi bitirir; Esc değeri değiştirmez.
 		if e.enter || !it.focused {
+			mut keep := false
 			if nv := parse_f32(c.num_buf.str()) {
-				v = num_clamp(nv, o.min, o.max)
-				r.committed = true
+				if o.reject && !num_in_range(nv, o.min, o.max) {
+					// Enter ile reddedilen değer düzenlemede kalır (metin korunur); odak kaybında Esc gibi atılır.
+					keep = it.focused
+					r.rejected = keep
+					r.escaped = !keep
+				} else {
+					v = num_clamp(nv, o.min, o.max)
+					r.committed = true
+				}
 			}
-			c.end_num(id)
+			if !keep {
+				c.end_num(id)
+			}
 		} else if e.esc {
+			r.escaped = true
 			c.end_num(id)
 		}
 	}
@@ -595,7 +623,7 @@ fn (mut c Context) num_drag(h int, cur f32, dx f32, o NumberFieldOpts, mut r Num
 	}
 	if h >= 0 && !c.states[h].flag(off_num_drag) {
 		c.states[h].set_flag(off_num_drag, true)
-		c.states[h].set_f32(off_num_v0, cur)
+		c.states[h].set_f32(off_num_v0, drag_bound(cur, o))
 		r.drag_started = true
 	}
 	if h >= 0 && c.key_pressed(.escape) {
@@ -605,7 +633,21 @@ fn (mut c Context) num_drag(h int, cur f32, dx f32, o NumberFieldOpts, mut r Num
 		return c.states[h].f32_at(off_num_v0)
 	}
 	mult := if c.inp.shift { f32(10) } else { f32(1) }
-	return num_clamp(cur + dx * o.step / drag_px_div * mult, o.min, o.max)
+	return drag_bound(num_clamp(cur + dx * o.step / drag_px_div * mult, o.min, o.max), o)
+}
+
+// Sürükleme sınırı (drag_clamp): yalnız sürükleme değerine uygulanır; min/max (yazılı) sınırından bağımsızdır.
+fn drag_bound(v f32, o NumberFieldOpts) f32 {
+	if !o.drag_clamp {
+		return v
+	}
+	if v < o.drag_min {
+		return o.drag_min
+	}
+	if v > o.drag_max {
+		return o.drag_max
+	}
+	return v
 }
 
 // Rengin opaklığını a (0..1) ile çarpar; menü açılışı için.

@@ -24,6 +24,7 @@ fn vk_to_key(vk u16) ui.Key {
 		0x5A { .z }
 		0x74 { .f5 }
 		0x75 { .f6 }
+		0x46 { .f }
 		0x79 { .f10 }
 		else { .none }
 	}
@@ -41,6 +42,7 @@ fn to_ui_input(f platform.InputFrame, scale f32, now_ms f64) ui.Input {
 		ctrl:     f.ctrl
 		shift:    f.shift
 		alt:      f.alt
+		space:    f.space
 		time_ms:  now_ms
 	}
 	for i in 0 .. f.vkey_count {

@@ -474,3 +474,23 @@ fn test_load_rejects_inf_in_explicit_range_world_untouched() {
 	assert error_code(load_reply(mut s, path)) == -32602
 	assert s.engine.state_hash() == before
 }
+
+// Başarılı scene.load sayacı artar; hatalı yükleme (yol yok) artırmaz.
+fn test_load_count_counts_successful_loads() {
+	dir := scene_load_dir()
+	os.rmdir_all(dir) or {}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut s := new_scene_server()
+	defer {
+		s.close()
+	}
+	spawn_one(mut s)
+	path := write_scene_file('count.vscene', scene_text(s.world(), s.registry()))
+	assert s.load_count() == 0
+	load_reply(mut s, path)
+	assert s.load_count() == 1
+	load_reply(mut s, path + '.yok')
+	assert s.load_count() == 1, 'hatalı yükleme sayılmaz'
+}

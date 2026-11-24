@@ -78,6 +78,11 @@ fn C.glGetString(name u32) &u8
 fn C.vcore_win_reset()
 fn C.vcore_win_mark_closed()
 fn C.vcore_win_closed() int
+fn C.vcore_win_clear_closed()
+fn C.vcore_win_mark_quit()
+fn C.vcore_win_quit() int
+fn C.IsIconic(hwnd voidptr) int
+fn C.PostQuitMessage(code int)
 fn C.vcore_in_ptr() &C.VcoreInput
 fn C.vcore_pending_get() u16
 fn C.vcore_pending_set(v u16)
@@ -113,6 +118,7 @@ mut:
 	ctrl       int
 	shift      int
 	alt        int
+	space      int
 	focused    int
 }
 
@@ -212,22 +218,28 @@ fn record_input(hwnd voidptr, msg u32, wp usize, lp isize) {
 			}
 		}
 		0x0007 { p.focused = 1 } // WM_SETFOCUS
-		0x0008 { // WM_KILLFOCUS: bırakılmamış düğmeler kapanır
+		0x0008 { // WM_KILLFOCUS: bırakılmamış düğmeler ve tutulan tuşlar kapanır (bırakma olayı pencereye gelmez)
 			for b in 0 .. 3 {
 				if p.down[b] != 0 {
 					p.down[b] = 0
 					p.released[b] = 1
 				}
 			}
+			p.ctrl = 0
+			p.shift = 0
+			p.alt = 0
+			p.space = 0
 			C.ReleaseCapture()
 			p.focused = 0
 		}
 		else {}
 	}
-	if msg == 0x0200 || msg == 0x0100 || msg == 0x0104 || (msg >= 0x0201 && msg <= 0x0208) {
+	// Tutulan durum (ctrl/shift/alt/space) tuş bırakma mesajlarında da yenilenir: bırakılan tuş bayrakta kalmaz.
+	if msg == 0x0200 || msg == 0x0100 || msg == 0x0104 || msg == 0x0101 || msg == 0x0105 || (msg >= 0x0201 && msg <= 0x0208) {
 		p.ctrl = key_down(0x11) // VK_CONTROL
 		p.shift = key_down(0x10) // VK_SHIFT
 		p.alt = key_down(0x12) // VK_MENU
+		p.space = key_down(0x20) // VK_SPACE: tutulan durum (pan için)
 	}
 }
 
@@ -339,17 +351,37 @@ pub fn (mut w Window) close() {
 	}
 }
 
+// Kapanış isteğini tüketir: çağıran (editör) karar verene kadar pencere açık kalır.
+pub fn (mut w Window) clear_close() {
+	C.vcore_win_clear_closed()
+}
+
 // Bekleyen mesajları boşaltır. Kapanış isteği (WM_CLOSE veya WM_QUIT) görülürse false döner.
 pub fn (mut w Window) poll() bool {
 	mut msg := C.MSG{}
 	for C.PeekMessageW(&msg, unsafe { nil }, 0, 0, 0x0001) != 0 { // PM_REMOVE
 		if msg.message == 0x0012 { // WM_QUIT
-			C.vcore_win_mark_closed()
+			C.vcore_win_mark_quit()
 		}
 		C.TranslateMessage(&msg)
 		C.DispatchMessageW(&msg)
 	}
-	return C.vcore_win_closed() == 0
+	return C.vcore_win_closed() == 0 && C.vcore_win_quit() == 0
+}
+
+// WM_QUIT kapanış bayrağından ayrıdır: clear_close onu silmez.
+pub fn (w &Window) quit_requested() bool {
+	return C.vcore_win_quit() != 0
+}
+
+// Küçültülmüş pencereyi geri yükler (kaydedilmemiş değişiklik şeridi görünsün diye).
+pub fn (mut w Window) restore() {
+	C.ShowWindow(w.hwnd, 9) // SW_RESTORE
+}
+
+// Küçültülmüş mü (test ve tanı).
+pub fn (w &Window) minimized() bool {
+	return C.IsIconic(w.hwnd) != 0
 }
 
 // Bu karenin girdisini döner ve kare başı alanları sıfırlar (pressed, released, wheel, vkeys, chars).
@@ -364,6 +396,7 @@ pub fn (mut w Window) input() InputFrame {
 		ctrl:       p.ctrl != 0
 		shift:      p.shift != 0
 		alt:        p.alt != 0
+		space:      p.space != 0
 		focused:    p.focused != 0
 	}
 	for i in 0 .. 3 {

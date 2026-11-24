@@ -50,6 +50,7 @@ pub enum Key {
 	f5
 	f6
 	f10
+	f
 }
 
 // Mantıksal piksel; buton 0 sol, 1 sağ, 2 orta.
@@ -69,6 +70,7 @@ pub mut:
 	ctrl       bool
 	shift      bool
 	alt        bool
+	space      bool // Boşluk basılı (tutulan durum; keys kenar olaylarıdır)
 	time_ms    f64
 }
 

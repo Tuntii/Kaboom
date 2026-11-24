@@ -465,6 +465,8 @@ fn (mut s Server) sim_step(p Val) !Val {
 	for _ in 0 .. n {
 		s.engine.step()
 	}
+	// R6: simülasyon adımı dünyayı değiştirir (kaydedilmiş dosyadan ayrılır).
+	s.changes += u64(n)
 	return kv('tick', num(f64(u64(s.engine.tick()))))
 }
 
@@ -490,6 +492,8 @@ fn (mut s Server) sim_reset() !Val {
 	s.engine = engine
 	// Yeni motorun geçmişi boş ve derinliği 0: açık editör grubu da artık yok.
 	s.editor_depth = 0
+	s.changes++
+	s.world_gen++
 	return empty_object()
 }
 
@@ -607,6 +611,9 @@ fn (s &Server) scene_save(p Val) !Val {
 // Sonuç dizisi dünya sıfırlanmadan önce kurulur: sıfırlamadan sonra yetmezlik olmaz.
 fn (mut s Server) scene_load(p Val) !Val {
 	path := string_param(p, 'path')!
+	if path.len > last_path_cap {
+		return invalid_params('scene path is longer than ${last_path_cap} bytes')
+	}
 	text := load_scene_text(path) or {
 		return io_error(path, 'could not read file; check that the path exists and is readable, then retry scene.load')
 	}
@@ -661,6 +668,12 @@ fn (mut s Server) scene_load(p Val) !Val {
 	}
 	// Kurulum komutları geçmişe yazılmış olabilir: yüklenen sahne tek geri alma adımı değildir.
 	s.engine.history.clear()
+	s.loads++
+	// Ajan yüklemesi de editörde yol olarak benimsenir (last_load_path).
+	s.last_path_len = path.len
+	for i in 0 .. path.len {
+		s.last_path[i] = path[i]
+	}
 	res := obj()
 	res.set('entities', out)
 	return res
@@ -882,11 +895,17 @@ fn (mut s Server) commit(cmds []cmd.Command) ! {
 		}
 	}
 	_ = s.engine.flush()
-	for i, c in cmds {
-		r := s.engine.queue.result(u32(i))
-		if r.status != .ok {
-			return s.cmd_error(r.status, c)
+	// Kuyruk her komutu uygular: her başarılı sonuç sayılır, hata ilk hatalı komuttan döner.
+	mut first := -1
+	for i in 0 .. cmds.len {
+		if s.engine.queue.result(u32(i)).status == .ok {
+			s.changes++
+		} else if first < 0 {
+			first = i
 		}
+	}
+	if first >= 0 {
+		return s.cmd_error(s.engine.queue.result(u32(first)).status, cmds[first])
 	}
 }
 
@@ -903,6 +922,7 @@ fn (mut s Server) commit_one(c cmd.Command) ! {
 	if r.status != .ok {
 		return s.cmd_error(r.status, c)
 	}
+	s.changes++
 }
 
 // Komut hatasını entity, component ve field bağlamıyla kodlar.

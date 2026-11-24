@@ -74,6 +74,13 @@ pub const selection_bg = Color(0x3D6FD62E)
 pub const danger = Color(0xE5484DFF)
 pub const warning = Color(0xF5A524FF)
 
+// Gizmo eksen renkleri: düşük doygunluk, taşıma tutamaçlarını seçim vurgusundan ayırır.
+pub const axis_x = Color(0xC9736EFF)
+pub const axis_y = Color(0x7FB069FF)
+// Tutamaç hover rengi: eksen renginin açık tonu.
+pub const axis_x_hover = Color(0xE38C86FF)
+pub const axis_y_hover = Color(0x95C283FF)
+
 // Aralık.
 pub const space_1 = f32(4)
 pub const space_2 = f32(8)
@@ -94,10 +101,12 @@ pub const toolbar_h = f32(40)
 pub const statusbar_h = f32(24)
 pub const icon_size = f32(16)
 pub const splitter_w = f32(4)
+pub const notice_edge_w = f32(3) // uyarı şeridinin sol kenarı (ince)
 pub const drag_threshold = f32(3) // sürükleme eşiği (mantıksal px): küçük titremeyi tıklamadan ayırır
 pub const num_field_w = f32(96)
 pub const label_col_w = f32(56) // özellik satırı etiket sütunu
 pub const menu_min_w = f32(160) // açılır menünün asgari genişliği
+pub const file_name_max_w = f32(280) // araç çubuğunda dosya adının en geniş hali (uzunsa …)
 
 pub enum FontFace {
 	sans

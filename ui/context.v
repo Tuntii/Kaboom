@@ -398,8 +398,13 @@ pub fn (c &Context) node_overflow() u32 {
 
 // Son tamamlanan düzendeki dikdörtgen; kare denetimi yok (vitrin betiği kareler arası konum bulur).
 pub fn (c &Context) last_rect(label string) ?Rect {
-	h := c.probe(c.id(label))
-	if h < 0 || c.states[h].id != c.id(label) || c.states[h].rect_frame == 0 {
+	return c.last_rect_id(c.id(label))
+}
+
+// Kimlikle son karenin dikdörtgeni (kimlik push_id yığınına bağlıysa etikete bakılamaz); tahsissiz.
+pub fn (c &Context) last_rect_id(id u32) ?Rect {
+	h := c.probe(id)
+	if h < 0 || c.states[h].id != id || c.states[h].rect_frame == 0 {
 		return none
 	}
 	return c.states[h].rect
@@ -664,6 +669,33 @@ fn (mut c Context) drop_stale() {
 // Alanlar kendi karesinde çizilirken güncellenir; çağıran kareyi alan çizimlerinden sonra sorgulamalı.
 pub fn (c &Context) keyboard_captured() bool {
 	return c.txt_id != 0 || c.num_id != 0
+}
+
+// Odağı etikete verir (kare içinde, alan çizilmeden önce): editör yol alanı açılınca yazı hemen girilir.
+pub fn (mut c Context) focus_label(label string) {
+	c.focus = c.id(label)
+}
+
+// Açık menü (önceki karenin durumu) klavyeyi sahiplenir: menü açıkken kısayollar çalışmaz.
+pub fn (c &Context) menu_open() bool {
+	return c.kb_menu
+}
+
+// Düzenleme ve sürükleme durumunu bırakır; değer yazılmaz. Çağıran, widget'ların eski kimliklerini yeni dünyaya
+// taşımamak için dünya değiştiğinde çağırır (sayı alanı sürüklemesi ve düzenlemesi, metin alanı, odak).
+pub fn (mut c Context) abandon_edit() {
+	c.active = 0
+	c.drag_on = false
+	c.num_id = 0
+	c.txt_id = 0
+	c.focus = 0
+	c.focus_visible = false
+}
+
+// Kısayol: k bu karede basıldı, klavye bir alanda değil ve açık menü klavyeyi sahiplenmiyor.
+// Çağıran kısayolu alanları çizdikten sonra sorgulamalı.
+pub fn (c &Context) shortcut(k Key) bool {
+	return !c.keyboard_captured() && !c.kb_menu && c.key_pressed(k)
 }
 
 // Önceki karenin dikdörtgeni imleci içeriyor mu.
