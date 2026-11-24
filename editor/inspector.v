@@ -48,6 +48,7 @@ mut:
 	grouping   bool // sürükleme grubu açık (geri alma grubu, history_begin_group)
 	group_id   ecs.EntityID
 	group_comp u16
+	empty      bool // son karede "Seçim yok" gösterildi (inspector_empty)
 }
 
 fn (mut i Inspector) hit(kind u8, comp u16, field u16, id u32, val f32) {
@@ -139,6 +140,22 @@ pub fn (e &Editor) inspector_rect(c &ui.Context, kind u8, comp u16, field u16) ?
 	return none
 }
 
+// Alan satırının sayı kutusu (son kare); senaryo girdisi için tıklama hedefi.
+pub fn (e &Editor) field_rect(c &ui.Context, comp u16, field u16) ?ui.Rect {
+	return e.inspector_rect(c, hit_field, comp, field)
+}
+
+// "Bileşen ekle" düğmesinin dikdörtgeni (son kare); bileşen kimliği varlık kimliğiyle kapsamlı olduğundan düz etiketle bulunmaz.
+pub fn (e &Editor) add_component_rect(c &ui.Context) ?ui.Rect {
+	for k in 0 .. e.ins.nhits {
+		h := e.ins.hits[k]
+		if h.kind == hit_add {
+			return c.last_rect_id(h.id)
+		}
+	}
+	return none
+}
+
 // Seçili varlığın inspektörü: başlık #index, bileşen bölümleri, altta "Bileşen ekle". Seçim yoksa sönük metin.
 pub fn (mut e Editor) inspector(mut c ui.Context, mut srv protocol.Server) {
 	w := srv.world()
@@ -151,6 +168,7 @@ pub fn (mut e Editor) inspector(mut c ui.Context, mut srv protocol.Server) {
 		srv.history_end_group()
 		e.ins.grouping = false
 	}
+	e.ins.empty = !alive
 	if !alive {
 		c.text('Inspector', .title, ui.text_primary)
 		c.text('Seçim yok', .body, ui.text_muted)
@@ -299,6 +317,11 @@ fn (mut e Editor) comp_request(mut srv protocol.Server, method string, id ecs.En
 	r.param_entity('entity', id)
 	r.param_str('component', cname)
 	_ = srv.handle_from(r.end(), .editor)
+}
+
+// Son karede inspektör "Seçim yok" gösterdi mi (okuma; testler için).
+pub fn (e &Editor) inspector_empty() bool {
+	return e.ins.empty
 }
 
 // Son karede bir alan satırında gösterilen değer (sayı alanının çizdiği değerle aynı); yoksa none (testler için).

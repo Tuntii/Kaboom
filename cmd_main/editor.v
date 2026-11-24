@@ -24,6 +24,20 @@ mut:
 	hidden     bool
 	frames     int = 3
 	screenshot string
+	// Senaryo bayrakları (editor_script.v): UI'ye sentetik girdi; editörün iç durumuna dokunmaz.
+	select      int = -1 // N. satırdaki varlığı seç (sahnede tıklanır)
+	open_menu   bool     // Bileşen ekle menüsünü aç
+	dirty_strip bool     // kirlet ve Aç: kaydedilmemiş değişiklik şeridi
+	bad_value   bool     // Sprite.r alanına aralık dışı değer yaz (hata satırı)
+}
+
+// Senaryo bayrakları için: negatif olmayan tamsayı; yoksa kullanım hatası.
+fn parse_nonneg(s string) int {
+	n := s.parse_int(10, 32) or { usage() }
+	if n < 0 {
+		usage()
+	}
+	return int(n)
 }
 
 fn parse_editor_opts(args []string) EditorOpts {
@@ -32,6 +46,15 @@ fn parse_editor_opts(args []string) EditorOpts {
 	for i < args.len {
 		if args[i] == '--hidden' {
 			o.hidden = true
+			i++
+			continue
+		}
+		if args[i] == '--open-menu' || args[i] == '--dirty-strip' || args[i] == '--bad-value' {
+			match args[i] {
+				'--open-menu' { o.open_menu = true }
+				'--dirty-strip' { o.dirty_strip = true }
+				else { o.bad_value = true }
+			}
 			i++
 			continue
 		}
@@ -51,6 +74,7 @@ fn parse_editor_opts(args []string) EditorOpts {
 			'--width' { o.width = parse_positive(v) }
 			'--height' { o.height = parse_positive(v) }
 			'--frames' { o.frames = parse_positive(v) }
+			'--select' { o.select = parse_nonneg(v) }
 			'--scale' {
 				s := v.f32()
 				if s <= 0 {
@@ -71,7 +95,11 @@ fn run_editor(args []string) {
 	defer {
 		platform.end_timer_period()
 	}
-	o := parse_editor_opts(args)
+	mut o := parse_editor_opts(args)
+	mut script := editor_script_from(o)
+	if script.active() && script.frames_needed() > o.frames {
+		o.frames = script.frames_needed()
+	}
 	phys_w := if o.scale > 0 { int(math.round(f64(o.width) * f64(o.scale))) } else { o.width }
 	phys_h := if o.scale > 0 { int(math.round(f64(o.height) * f64(o.scale))) } else { o.height }
 	cfg := sim.Config{}
@@ -134,6 +162,8 @@ fn run_editor(args []string) {
 	mut acc := u64(0)
 	mut eof := false
 	mut frame := 0
+	mut restored := false // küçültülmüş pencere: her kapatma isteğinde en fazla bir geri yükleme
+	mut prev := editor.EditorFrame{} // önceki karenin düzeni (senaryo hedefleri için)
 	for {
 		if drain_agent(ch, mut srv) {
 			eof = true
@@ -145,6 +175,7 @@ fn run_editor(args []string) {
 			}
 			win.clear_close()
 			ed.request_close()
+			restored = false
 		}
 		fw, fh := win.size()
 		if fw <= 0 || fh <= 0 {
@@ -153,8 +184,9 @@ fn run_editor(args []string) {
 			if ed.should_close() {
 				break
 			}
-			if ed.confirm_pending() {
+			if !restored && ed.confirm_pending() && win.minimized() {
 				win.restore()
+				restored = true
 			}
 			time.sleep(time.millisecond)
 			continue
@@ -167,9 +199,14 @@ fn run_editor(args []string) {
 		acc = rem
 		alpha := if srv.paused() { f32(1.0) } else { f32(rem) / f32(sim.step_ns) }
 
-		inp := to_ui_input(win.input(), scale, f64(now) / 1e6)
+		inp := if script.active() {
+			script.input(&ctx, &ed, &srv, prev, f64(now) / 1e6)
+		} else {
+			to_ui_input(win.input(), scale, f64(now) / 1e6)
+		}
 		ctx.begin(inp, f32(fw) / scale, f32(fh) / scale, scale)
 		fr := ed.frame(mut ctx, mut srv)
+		prev = fr
 		list := ctx.end()
 		mut out := rend.payload()
 		n, _ := render.prepare(srv.world(), qf, alpha, mut out)
