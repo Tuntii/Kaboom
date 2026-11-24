@@ -28,6 +28,13 @@ struct RoleMetrics {
 	line f32 // mantıksal piksel
 }
 
+// Yüz başına kerning tablosu önbelleği; ilk kern çağrısında dolar. Atlas kopyaları aynı önbelleği paylaşır.
+struct KernCache {
+mut:
+	ready [3]bool
+	tabs  [3][]KernPair // sıralı çift tablosu (charset indeksleri)
+}
+
 // Tek kanallı (R8) atlas. Stb tutamaçları kerning için saklanır; bayt dizileri gömülü fontlara işaret eder.
 pub struct Atlas {
 pub:
@@ -43,7 +50,7 @@ mut:
 	white_v f32
 	metrics [roles_n]RoleMetrics
 	infos   [3][stbtt_info_size]u8
-	kerns   [3][]KernPair // yüz başına sıralı çift tablosu (charset indeksleri)
+	kc      &KernCache = unsafe { nil } // Atlas.build doldurur; sıfır Atlas üzerinde kern çağrılmaz
 }
 
 pub fn Atlas.build(scale f32) !Atlas {
@@ -57,11 +64,10 @@ pub fn Atlas.build(scale f32) !Atlas {
 		sc:     scale
 		cps:    cps
 		glyphs: []Glyph{len: roles_n * n}
+		kc:     &KernCache{}
 	}
-	mut faces := [][]u8{}
 	for face in [FontFace.sans, .sans_medium, .mono] {
 		data := face_bytes(face)
-		faces << data
 		if C.stbtt_InitFont(info_of(&a.infos[int(face)]), unsafe { &u8(data.data) }, 0) == 0 {
 			return error('atlas: font okunamadı')
 		}
@@ -106,15 +112,6 @@ pub fn Atlas.build(scale f32) !Atlas {
 			}
 			gid[r * n + ci] = g
 		}
-	}
-	// Kerning yalnızca gerçek glif kimlikleriyle; eksik glifler (0) atlanır.
-	for face in [FontFace.sans, .sans_medium, .mono] {
-		info := info_of(&a.infos[int(face)])
-		mut gids := []int{len: n}
-		for ci, cp in cps {
-			gids[ci] = C.stbtt_FindGlyphIndex(info, int(cp))
-		}
-		a.kerns[int(face)] = gpos_kern_table(faces[int(face)], gids)
 	}
 	isz := int(math.round(f64(icon_size * scale)))
 	mut dims := [][2]int{cap: 1 + roles_n * n + icon_n}
@@ -345,10 +342,30 @@ pub fn (a &Atlas) ascent(role TextRole) f32 {
 	return a.metrics[int(role)].asc
 }
 
-// Fiziksel piksel; GPOS çifti tablosunda ikili arama, tahsis yok.
+// Charset glif kimlikleri (yüz başına); eksik glif 0. Kerning yalnızca gerçek kimliklerle kurulur.
+fn (a &Atlas) face_gids(face FontFace) []int {
+	info := info_of(&a.infos[int(face)])
+	mut gids := []int{len: a.cps.len}
+	for ci, cp in a.cps {
+		gids[ci] = C.stbtt_FindGlyphIndex(info, int(cp))
+	}
+	return gids
+}
+
+// Yüz kerning tablosu; ilk çağrıda kurulur (tek seferlik tahsis), sonra önbellekten döner.
+fn (a &Atlas) kern_table(face FontFace) []KernPair {
+	mut kc := a.kc
+	if !kc.ready[int(face)] {
+		kc.tabs[int(face)] = gpos_kern_table(face_bytes(face), a.face_gids(face))
+		kc.ready[int(face)] = true
+	}
+	return kc.tabs[int(face)]
+}
+
+// Fiziksel piksel; GPOS çifti tablosunda ikili arama, kurulu değilse ilk çağrıda kurulur.
 pub fn (a &Atlas) kern(role TextRole, prev u32, cp u32) f32 {
 	face, _ := role.spec()
-	tab := a.kerns[int(face)]
+	tab := a.kern_table(face)
 	key := u32(a.index_or_fallback(prev)) << 16 | u32(a.index_or_fallback(cp))
 	mut lo := 0
 	mut hi := tab.len
