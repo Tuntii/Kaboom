@@ -165,6 +165,11 @@ pub fn (v Val) at(i int) ?Val {
 	}
 }
 
+// Nesne ya da dizinin çocuk sayısı (len yalnız diziler için 0 değil, nesneler için 0 döner).
+pub fn (v Val) child_count() int {
+	return C.cJSON_GetArraySize(v.n)
+}
+
 pub fn (v Val) len() int {
 	if !v.is_array() {
 		return 0

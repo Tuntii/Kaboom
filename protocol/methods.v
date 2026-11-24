@@ -156,7 +156,7 @@ fn (mut s Server) entity_spawn(p Val) !Val {
 // Bir varlığın bileşen nesnesinden planları üretir (entity.spawn ve scene.load ortak yolu); dünyaya dokunmaz.
 // Yinelenen anahtarda yalnız son değer geçerlidir. scene: .vscene değerleri kabul edilir.
 fn (s &Server) component_plans(comps Val, scene bool) ![]Plan {
-	mut plans := []Plan{}
+	mut plans := []Plan{cap: comps.child_count()}
 	mut ok := false
 	defer {
 		if !ok {
@@ -197,12 +197,18 @@ fn (s &Server) check_queue_slots(plans []Plan) ! {
 // Planları bir varlığa dönüştürür: önce spawn (id'yi alır), sonra her bileşen bir add, her alan bir set.
 // Çağıran kuyruk sığmasını check_queue_slots ile önceden denetler.
 fn (mut s Server) spawn_planned(plans []Plan) !ecs.EntityID {
-	s.commit([cmd.Command{
+	// Tek komut: dizi literali (heap) ayrılmadan commit_one.
+	s.commit_one(cmd.Command{
 		kind:   .spawn
 		source: s.source
-	}])!
+	})!
 	e := s.engine.queue.result(0).entity
-	mut cmds := []cmd.Command{}
+	// Kapasite önceden: büyüyen dizi yeniden ayırır (tahsis sayacı bunu sızıntı sayar).
+	mut slots := 0
+	for pl in plans {
+		slots += 1 + pl.writes.len
+	}
+	mut cmds := []cmd.Command{cap: slots}
 	defer {
 		unsafe { cmds.free() }
 	}
@@ -454,6 +460,7 @@ fn (mut s Server) sim_step(p Val) !Val {
 
 // Bölgeyi serbest birakip tazesini ayırır. Yeniden ayırma başarısızsa sunucu kapalı kalır.
 fn (mut s Server) sim_reset() !Val {
+	s.engine.free()
 	_ = memory.release(s.region)
 	s.region = unsafe { nil }
 	need := s.cfg.bytes_needed(&s.reg)
@@ -567,6 +574,9 @@ fn (s &Server) replay_run(p Val) !Val {
 fn (s &Server) scene_save(p Val) !Val {
 	path := string_param(p, 'path')!
 	text := scene_text(s.world(), s.registry())
+	defer {
+		unsafe { text.free() }
+	}
 	save_scene_atomic(path, text) or {
 		return io_error(path, 'could not write file; check that the folder exists and is writable, then retry scene.save')
 	}
@@ -584,6 +594,9 @@ fn (mut s Server) scene_load(p Val) !Val {
 	path := string_param(p, 'path')!
 	text := load_scene_text(path) or {
 		return io_error(path, 'could not read file; check that the path exists and is readable, then retry scene.load')
+	}
+	defer {
+		unsafe { text.free() }
 	}
 	req_off := arena_used()
 	need := scene_arena_bytes(text.len)
@@ -719,7 +732,8 @@ fn (s &Server) plan_component(name string, values Val, scene_values bool) !Plan 
 	schema := s.reg.component(id) or {
 		return status_error(.unknown_component, kv('component', str_val(name)))
 	}
-	mut writes := []FieldWrite{}
+	// +2: Transform'un prev_x/prev_y tohumu (seed_transform_prev) en fazla iki yazım ekler.
+	mut writes := []FieldWrite{cap: values.child_count() + 2}
 	mut ok := false
 	defer {
 		if !ok {

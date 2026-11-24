@@ -34,11 +34,7 @@ pub fn World.new(mut parent memory.LinearArena, reg &Registry, capacity u32) ?Wo
 			parent.rewind(m)
 			return none
 		}
-		mut types := []FieldType{cap: schema.fields.len}
-		for f in schema.fields {
-			types << f.typ
-		}
-		store := ComponentStore.new(mut parent, types, capacity) or {
+		store := new_component_store(mut parent, schema.fields, capacity) or {
 			parent.rewind(m)
 			return none
 		}
@@ -48,6 +44,23 @@ pub fn World.new(mut parent memory.LinearArena, reg &Registry, capacity u32) ?Wo
 		alloc:  alloc
 		stores: stores
 	}
+}
+
+// Tip dizisi yalnız kurulum süresince yaşar: ComponentStore tipleri kopyalar.
+fn new_component_store(mut parent memory.LinearArena, fields []FieldSchema, capacity u32) ?ComponentStore {
+	mut types := []FieldType{cap: fields.len}
+	defer {
+		unsafe { types.free() }
+	}
+	for f in fields {
+		types << f.typ
+	}
+	return ComponentStore.new(mut parent, types, capacity)
+}
+
+// World'ün V heap'teki bileşen dizisini serbest bırakır (arena belleği region'la birlikte gider).
+pub fn (mut w World) free() {
+	unsafe { w.stores.free() }
 }
 
 pub fn (mut w World) spawn() ?EntityID {

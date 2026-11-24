@@ -98,6 +98,7 @@ pub fn Server.new(cfg sim.Config) !Server {
 // Bölgeleri serbest birakir. Sonrasindaki istekler yapilandirilmis hata döner.
 pub fn (mut s Server) close() {
 	if s.region != unsafe { nil } {
+		s.engine.free()
 		_ = memory.release(s.region)
 		s.region = unsafe { nil }
 	}

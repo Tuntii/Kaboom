@@ -105,6 +105,11 @@ pub fn Sim.new(mut parent memory.LinearArena, reg &ecs.Registry, cfg Config) ?Si
 	}
 }
 
+// Motorun V heap'teki ayırmalarını (dünya bileşen dizisi) serbest bırakır; geri kalan bellek parent arenadadır.
+pub fn (mut s Sim) free() {
+	s.world.free()
+}
+
 pub fn (mut s Sim) push(c cmd.Command) bool {
 	return s.queue.push(c)
 }

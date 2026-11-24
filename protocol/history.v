@@ -30,6 +30,9 @@ fn (mut s Server) history_run(undo bool) !Val {
 	view := popped or { return history_result(false, 0, 0, []IdPair{}) }
 	// Kopya önce alınır: ters işlemin yakalaması halkanın üzerine yazar. Komutlar isteği yapanın kaynağını taşır.
 	mut blocks := copy_blocks(view, s.source)
+	defer {
+		free_blocks(mut blocks)
+	}
 	mode := if undo { cmd.HistoryMode.undoing } else { cmd.HistoryMode.redoing }
 	// Tüm yürütme tek grup: karşı yığına (yineleme ya da geri alma) tek bir adım olarak girer.
 	s.engine.history.begin_group()
@@ -37,7 +40,9 @@ fn (mut s Server) history_run(undo bool) !Val {
 	ok, failed, pairs := s.apply_blocks(mut blocks)
 	s.engine.history.set_mode(.normal)
 	s.engine.history.end_group()
-	return history_result(true, ok, failed, pairs)
+	res := history_result(true, ok, failed, pairs)
+	unsafe { pairs.free() }
+	return res
 }
 
 // Editör API'si (protokol komutu değil): açık grup, süreç içi istekleri tek geri alma adımında toplar.
@@ -65,10 +70,14 @@ pub fn (mut s Server) history_cancel_group() ! {
 	view := s.engine.history.staged()
 	// Editör API'leri yalnız editörden çağrılır (R4): iptal, handle_from dışında çağrıldığı için s.source (varsayılan agent) değil .editor etiketler.
 	mut blocks := copy_blocks(view, .editor)
+	defer {
+		free_blocks(mut blocks)
+	}
 	s.engine.history.abandon_group()
 	s.editor_depth = 0
 	s.engine.history.set_mode(.off)
-	_, _, _ = s.apply_blocks(mut blocks)
+	_, _, pairs := s.apply_blocks(mut blocks)
+	unsafe { pairs.free() }
 	s.engine.history.set_mode(.normal)
 }
 
@@ -119,6 +128,14 @@ fn rewrite_after(mut blocks [][]cmd.Command, bi int, ci int, old ecs.EntityID, n
 			}
 		}
 	}
+}
+
+// copy_blocks'un ayırdığı dış ve iç dizileri serbest bırakır.
+fn free_blocks(mut blocks [][]cmd.Command) {
+	for mut b in blocks {
+		unsafe { b.free() }
+	}
+	unsafe { blocks.free() }
 }
 
 // Blokları ring belleğinden ayrı dizilere kopyalar; block(0) en son blok, yani uygulama sırası.

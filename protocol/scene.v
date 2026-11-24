@@ -8,40 +8,56 @@ import winfile
 // strtof std sınıfıdır, V sarmalayıcısı yoktur.
 fn C.strtof(s &char, endp voidptr) f32
 
-// En kısa geri-dönüşlü f32 metni. Kural: |v| < 1e7 ve tamsayı ise tam sayı olarak (100, 9999999);
+// En kısa geri-dönüşlü f32 metni (testler ve kısa kullanım için; yeni string ayırır).
+pub fn f32_text(v f32) string {
+	mut b := strings.new_builder(16)
+	defer {
+		unsafe { b.free() }
+	}
+	write_f32_text(mut b, v)
+	return b.str()
+}
+
+// f32_text'in tampona yazan hali: tick dışı döngüde (scene_text) V heap tahsisi yapmaz.
+// Kural: |v| < 1e7 ve tamsayı ise tam sayı olarak (100, 9999999);
 // aksi halde p = 1..9 için %.*g denenir ve strtof ile bit-eşit geri okunan ilk p kullanılır
 // (1/3 → 0.33333334, 1e7 → 1e+07). Sonsuz ve NaN JSON'da olmadığı için metin olarak döner (inf, -inf, nan).
-pub fn f32_text(v f32) string {
+fn write_f32_text(mut b strings.Builder, v f32) {
 	x := f64(v)
 	if v != v {
-		return 'nan'
+		b.write_string('nan')
+		return
 	}
 	if x > max_f32 {
-		return 'inf'
+		b.write_string('inf')
+		return
 	}
 	if x < -max_f32 {
-		return '-inf'
+		b.write_string('-inf')
+		return
 	}
 	if math.f32_bits(v) == 0x80000000 {
-		return '-0'
+		b.write_string('-0')
+		return
 	}
 	// Tamsayılar sabit noktada yazılır: %g 100'ü "1e+02" diye yazar, bu da bir tamsayı için okunaksızdır.
 	if x == math.floor(x) && math.abs(x) < 1e7 {
-		return '${i64(x)}'
+		b.write_decimal(i64(x))
+		return
 	}
 	mut buf := [32]u8{}
 	for p in 1 .. 10 {
 		unsafe {
 			C.snprintf(&char(&buf[0]), 32, &char('%.*g'.str), p, x)
 		}
-		text := unsafe { tos(&u8(&buf[0]), int(C.strlen(&char(&buf[0])))) }
 		// strtof yuvarlamayı IEEE ile yapar: bit-eşit geri okunan ilk p en kısa metindir.
-		if math.f32_bits(C.strtof(&char(text.str), unsafe { nil })) == math.f32_bits(v) {
-			return text.clone()
+		if math.f32_bits(C.strtof(&char(&buf[0]), unsafe { nil })) == math.f32_bits(v) {
+			unsafe { b.write_ptr(&u8(&buf[0]), int(C.strlen(&char(&buf[0])))) }
+			return
 		}
 	}
 	// Dokuz basamak her f32'yi geri döndürür; buraya gelinmez.
-	return '${x}'
+	b.write_string('${x}')
 }
 
 // Bileşen ve alan adları tanımlayıcıdır: JSON'a kaçışsız yazılır.
@@ -57,12 +73,25 @@ fn scene_ident(name string) bool {
 	return true
 }
 
+// Anahtar yazar: "name": (kaçışsız; ad tanımlayıcıdır).
+fn write_scene_key(mut b strings.Builder, name string) {
+	b.write_u8(`"`)
+	b.write_string(name)
+	b.write_string('":')
+}
+
 // .vscene metni: canlı varlıklar index sırasıyla, bileşenler kayıt sırasıyla, alanlar şema sırasıyla.
 // readonly alanlar (prev_*) yazılmaz: sistem her kare yeniden hesaplar. Yalnız f32 alanlar yazılır (entity.get ile aynı).
 pub fn scene_text(w &ecs.World, reg &ecs.Registry) string {
 	mut b := strings.new_builder(256)
+	// Tampon str() sonrası da ayrılmış kalır: serbest bırakılır (str kopya döndürür).
+	defer {
+		unsafe { b.free() }
+	}
 	alloc := w.entities()
-	b.write_string('{"format":"vscene","version":1,"capacity":${w.capacity()},"entities":[')
+	b.write_string('{"format":"vscene","version":1,"capacity":')
+	b.write_decimal(i64(w.capacity()))
+	b.write_string(',"entities":[')
 	b.write_u8(`\n`)
 	mut first := true
 	for i in 0 .. alloc.high_water() {
@@ -87,7 +116,8 @@ pub fn scene_text(w &ecs.World, reg &ecs.Registry) string {
 				b.write_u8(`,`)
 			}
 			first_comp = false
-			b.write_string('"${schema.name}":{')
+			write_scene_key(mut b, schema.name)
+			b.write_u8(`{`)
 			mut first_field := true
 			for fi, f in schema.fields {
 				if f.readonly {
@@ -103,12 +133,16 @@ pub fn scene_text(w &ecs.World, reg &ecs.Registry) string {
 					b.write_u8(`,`)
 				}
 				first_field = false
-				t := f32_text(math.f32_from_bits(u32(bits)))
+				write_scene_key(mut b, f.name)
+				val := math.f32_from_bits(u32(bits))
 				// Sonsuz ve NaN JSON sayısı değildir: tırnaklı metin olarak yazılır.
-				if t == 'inf' || t == '-inf' || t == 'nan' {
-					b.write_string('"${f.name}":"${t}"')
-				} else {
-					b.write_string('"${f.name}":${t}')
+				quote := math.is_nan(f64(val)) || math.is_inf(f64(val), 0)
+				if quote {
+					b.write_u8(`"`)
+				}
+				write_f32_text(mut b, val)
+				if quote {
+					b.write_u8(`"`)
 				}
 			}
 			b.write_u8(`}`)
@@ -139,6 +173,13 @@ fn load_scene_text(path string) !string {
 // Taşıma başarısızsa tmp silinir; var olan path bu noktaya kadar dokunulmaz.
 fn save_scene_atomic(path string, text string) ! {
 	tmp := path + '.tmp'
-	winfile.write_file(tmp, text.bytes())!
+	defer {
+		unsafe { tmp.free() }
+	}
+	data := text.bytes()
+	defer {
+		unsafe { data.free() }
+	}
+	winfile.write_file(tmp, data)!
 	winfile.replace_file(tmp, path)!
 }

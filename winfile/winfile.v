@@ -71,9 +71,12 @@ pub fn read_file(path string) ![]u8 {
 		C.fclose(f)
 	}
 	mut data := []u8{}
-	mut chunk := [4096]u8{}
+	mut chunk := []u8{len: 4096}
+	defer {
+		unsafe { chunk.free() }
+	}
 	for {
-		n := C.fread(&chunk[0], 1, 4096, f)
+		n := unsafe { C.fread(&chunk[0], 1, 4096, f) }
 		if n == 0 {
 			break
 		}
