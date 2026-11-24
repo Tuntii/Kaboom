@@ -15,6 +15,17 @@ fn C.glReadPixels(x int, y int, width int, height int, format u32, typ u32, pixe
 fn C.glFinish()
 fn C.glGetString(name u32) &u8
 fn C.glGetError() u32
+fn C.glGetIntegerv(pname u32, data voidptr)
+fn C.glGenTextures(n int, textures voidptr)
+fn C.glDeleteTextures(n int, textures voidptr)
+fn C.glBindTexture(target u32, texture u32)
+fn C.glTexImage2D(target u32, level int, internalformat int, width int, height int, border int, format u32, typ u32, pixels voidptr)
+fn C.glTexParameteri(target u32, pname u32, param int)
+fn C.glPixelStorei(pname u32, param int)
+fn C.glEnable(cap u32)
+fn C.glDisable(cap u32)
+fn C.glBlendFunc(sfactor u32, dfactor u32)
+fn C.glScissor(x int, y int, width int, height int)
 
 fn C.vcore_gl_set(slot int, p voidptr)
 fn C.vcore_gl_get(slot int) voidptr
@@ -35,6 +46,25 @@ pub const gl_triangles = u32(0x0004)
 pub const gl_color_buffer_bit = u32(0x4000)
 pub const gl_rgba = u32(0x1908)
 pub const gl_version = u32(0x1F02)
+pub const gl_unsigned_int = u32(0x1405)
+pub const gl_viewport = u32(0x0BA2)
+pub const gl_texture_2d = u32(0x0DE1)
+pub const gl_red = u32(0x1903)
+pub const gl_r8 = u32(0x8229)
+pub const gl_texture_min_filter = u32(0x2801)
+pub const gl_texture_mag_filter = u32(0x2800)
+pub const gl_linear = u32(0x2601)
+pub const gl_nearest = u32(0x2600)
+pub const gl_texture_wrap_s = u32(0x2802)
+pub const gl_texture_wrap_t = u32(0x2803)
+pub const gl_clamp_to_edge = u32(0x812F)
+pub const gl_unpack_alignment = u32(0x0CF5)
+pub const gl_texture0 = u32(0x84C0)
+pub const gl_blend = u32(0x0BE2)
+pub const gl_src_alpha = u32(0x0302)
+pub const gl_one_minus_src_alpha = u32(0x0303)
+pub const gl_one = u32(1)
+pub const gl_scissor_test = u32(0x0C11)
 
 // Yuva indeksleri; load_gl her birini kendi adıyla doldurur.
 const slot_create_shader = 0
@@ -64,6 +94,10 @@ const slot_enable_vertex_attrib_array = 23
 const slot_vertex_attrib_pointer = 24
 const slot_vertex_attrib_divisor = 25
 const slot_draw_arrays_instanced = 26
+const slot_active_texture = 27
+const slot_uniform1i = 28
+const slot_uniform2f = 29
+const slot_vertex_attrib_i_pointer = 30
 
 // Fonksiyon işaretçi tipleri. Parametreler GL'nin C imzasıyla birebir: GLsizei ve GLint = int, GLuint ve GLenum = u32.
 type FnCreateShader = fn (u32) u32
@@ -93,6 +127,10 @@ type FnEnableVertexAttribArray = fn (u32)
 type FnVertexAttribPointer = fn (u32, int, u32, u8, int, voidptr)
 type FnVertexAttribDivisor = fn (u32, u32)
 type FnDrawArraysInstanced = fn (u32, int, int, int)
+type FnActiveTexture = fn (u32)
+type FnUniform1i = fn (int, int)
+type FnUniform2f = fn (int, f32, f32)
+type FnVertexAttribIPointer = fn (u32, int, u32, int, voidptr)
 
 // Yuva sırası slot_* sabitleriyle aynıdır: gl_fn_names[slot_x] == 'glX'.
 const gl_fn_names = ['glCreateShader', 'glShaderSource', 'glCompileShader', 'glGetShaderiv',
@@ -101,7 +139,8 @@ const gl_fn_names = ['glCreateShader', 'glShaderSource', 'glCompileShader', 'glG
 	'glGetUniformLocation', 'glUniform4f', 'glGenVertexArrays', 'glBindVertexArray',
 	'glDeleteVertexArrays', 'glGenBuffers', 'glBindBuffer', 'glBufferData', 'glBufferSubData',
 	'glDeleteBuffers', 'glEnableVertexAttribArray', 'glVertexAttribPointer',
-	'glVertexAttribDivisor', 'glDrawArraysInstanced']
+	'glVertexAttribDivisor', 'glDrawArraysInstanced', 'glActiveTexture', 'glUniform1i', 'glUniform2f',
+	'glVertexAttribIPointer']
 
 // names[i] işaretçisini yuva i'ye yükler. Eksik olanların TAMAMINI tek hatada virgüllü listeler;
 // hata durumunda tüm yuvalar ve hazır bayrağı sıfırlanır (kısmi durum kalmaz).
@@ -282,6 +321,27 @@ pub fn draw_arrays_instanced(mode u32, first int, count int, instance_count int)
 	f(mode, first, count, instance_count)
 }
 
+pub fn active_texture(unit u32) {
+	f := unsafe { FnActiveTexture(C.vcore_gl_get(slot_active_texture)) }
+	f(unit)
+}
+
+pub fn uniform1i(location int, v int) {
+	f := unsafe { FnUniform1i(C.vcore_gl_get(slot_uniform1i)) }
+	f(location, v)
+}
+
+pub fn uniform2f(location int, x f32, y f32) {
+	f := unsafe { FnUniform2f(C.vcore_gl_get(slot_uniform2f)) }
+	f(location, x, y)
+}
+
+// Tamsayı girdi (GLSL uint/int): float'a dönüşmeden bellek bitleri olduğu gibi okunur.
+pub fn vertex_attrib_i_pointer(index u32, size int, typ u32, stride int, pointer voidptr) {
+	f := unsafe { FnVertexAttribIPointer(C.vcore_gl_get(slot_vertex_attrib_i_pointer)) }
+	f(index, size, typ, stride, pointer)
+}
+
 // GL 1.1 sarmalayıcıları: doğrudan opengl32 çağrıları.
 
 pub fn viewport(x int, y int, width int, height int) {
@@ -310,4 +370,53 @@ pub fn get_string(name u32) &u8 {
 
 pub fn get_error() u32 {
 	return C.glGetError()
+}
+
+pub fn get_integerv(pname u32, data voidptr) {
+	C.glGetIntegerv(pname, data)
+}
+
+// Tek doku kimliği üreten sarmalayıcı: glGenTextures(1, ...).
+pub fn gen_texture() u32 {
+	mut id := u32(0)
+	C.glGenTextures(1, voidptr(&id))
+	return id
+}
+
+pub fn bind_texture(target u32, texture u32) {
+	C.glBindTexture(target, texture)
+}
+
+// Tek doku kimlik silen sarmalayıcı: glDeleteTextures(1, ...).
+pub fn delete_texture(texture u32) {
+	mut id := texture
+	C.glDeleteTextures(1, voidptr(&id))
+}
+
+pub fn tex_image_2d(target u32, level int, internal_format int, width int, height int, border int, format u32, typ u32, pixels voidptr) {
+	C.glTexImage2D(target, level, internal_format, width, height, border, format, typ, pixels)
+}
+
+pub fn tex_parameteri(target u32, pname u32, param int) {
+	C.glTexParameteri(target, pname, param)
+}
+
+pub fn pixel_storei(pname u32, param int) {
+	C.glPixelStorei(pname, param)
+}
+
+pub fn enable(cap u32) {
+	C.glEnable(cap)
+}
+
+pub fn disable(cap u32) {
+	C.glDisable(cap)
+}
+
+pub fn blend_func(sfactor u32, dfactor u32) {
+	C.glBlendFunc(sfactor, dfactor)
+}
+
+pub fn scissor(x int, y int, width int, height int) {
+	C.glScissor(x, y, width, height)
 }

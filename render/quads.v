@@ -1,6 +1,7 @@
 module render
 
 import ecs
+import ui
 
 // GPU'ya giden instance kaydı: 16 bayt. Konum metre, rgba bellekte R, G, B, A sırasında.
 pub struct InstancePayload {
@@ -149,8 +150,7 @@ pub fn Renderer.new(capacity u32) !Renderer {
 	bind_vertex_array(0)
 	bind_buffer(gl_array_buffer, 0)
 	view_loc := get_uniform_location(program, c'u_view')
-	// Koyu gri zemin: her karede temizleme bu rengi kullanır; GL varsayılanı siyahtır.
-	clear_color(0.08, 0.08, 0.10, 1.0)
+	set_default_clear()
 	return Renderer{
 		program:  program
 		vao:      vao
@@ -179,6 +179,37 @@ pub fn (mut r Renderer) draw(cam Camera, width int, height int, n u32) {
 	bind_vertex_array(r.vao)
 	draw_arrays_instanced(gl_triangles, 0, 6, int(count))
 	r.draws++
+}
+
+// Koyu gri zemin: her karede temizleme bu rengi kullanır; GL varsayılanı siyahtır.
+fn set_default_clear() {
+	clear_color(0.08, 0.08, 0.10, 1.0)
+}
+
+// Yalnız (x, y, w, h) bölgesini surface_0 ile temizleyip çizer; bölge dışına dokunmaz.
+// x, y sol üst köken (fiziksel piksel). Viewport'u çağrıdan önceki haline geri yükler.
+pub fn (mut r Renderer) draw_viewport(cam Camera, x int, y int, w int, h int, n u32) {
+	sx, sy := cam.scale(w, h) or { return }
+	mut vp := [4]int{}
+	get_integerv(gl_viewport, voidptr(&vp))
+	gl_y := vp[3] - y - h
+	viewport(x, gl_y, w, h)
+	scissor(x, gl_y, w, h)
+	enable(gl_scissor_test)
+	c := u32(ui.surface_0)
+	clear_color(f32((c >> 24) & 0xFF) / 255, f32((c >> 16) & 0xFF) / 255, f32((c >> 8) & 0xFF) / 255, 1.0)
+	clear(gl_color_buffer_bit)
+	disable(gl_scissor_test)
+	set_default_clear()
+	count := if n > r.capacity { r.capacity } else { n }
+	use_program(r.program)
+	uniform4f(r.view_loc, cam.cx, cam.cy, sx, sy)
+	bind_buffer(gl_array_buffer, r.vbo)
+	buffer_sub_data(gl_array_buffer, 0, isize(count) * isize(sizeof(InstancePayload)), r.data.data)
+	bind_vertex_array(r.vao)
+	draw_arrays_instanced(gl_triangles, 0, 6, int(count))
+	r.draws++
+	viewport(vp[0], vp[1], vp[2], vp[3])
 }
 
 // Kümülatif instanced çizim çağrısı sayısı.
