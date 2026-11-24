@@ -578,3 +578,91 @@ fn test_splitter_visible_line_is_1px() {
 		}
 	}
 }
+
+fn wgt_count_rings(l &DrawList) u32 {
+	mut n := u32(0)
+	for i in 0 .. l.len() {
+		cmd := l.at(i)
+		if cmd.color == 0 && cmd.border_color == u32(accent) {
+			n++
+		}
+	}
+	return n
+}
+
+// Fare tıklaması düğmeye odak vermez: Space ikinci kez etkinleştirmez, odak halkası çizilmez.
+fn test_mouse_click_gives_button_no_focus() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := Tally{
+		enabled: true
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.button_ex('kaydet', .primary, tp.enabled) {
+			tp.ok++
+		}
+	}
+	wgt_frame(mut c, mouse_at(20, 10), body)
+	wgt_frame(mut c, press_at(20, 10), body)
+	wgt_frame(mut c, release_at(20, 10), body)
+	assert t.ok == 1
+	assert c.focused_id() == 0
+	assert wgt_count_rings(&c.list) == 0
+	mut space := Input{}
+	space.keys[0] = .space
+	space.key_count = 1
+	wgt_frame(mut c, space, body)
+	assert t.ok == 1
+}
+
+// Klavyeyle (Tab) odaklanan düğmede halka çizilir ve Enter etkinleştirir.
+fn test_tab_focus_draws_ring_and_enter_fires() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := Tally{
+		enabled: true
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.button_ex('kaydet', .primary, tp.enabled) {
+			tp.ok++
+		}
+	}
+	mut tab := Input{}
+	tab.keys[0] = .tab
+	tab.key_count = 1
+	wgt_frame(mut c, tab, body)
+	assert c.focused_id() == c.id('kaydet')
+	assert wgt_count_rings(&c.list) == 1
+	mut enter := Input{}
+	enter.keys[0] = .enter
+	enter.key_count = 1
+	wgt_frame(mut c, enter, body)
+	assert t.ok == 1
+}
+
+// Tekrar (autorepeat) Enter düğmeyi etkinleştirmez.
+fn test_enter_repeat_does_not_activate() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := Tally{
+		enabled: true
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.button_ex('kaydet', .primary, tp.enabled) {
+			tp.ok++
+		}
+	}
+	mut tab := Input{}
+	tab.keys[0] = .tab
+	tab.key_count = 1
+	wgt_frame(mut c, tab, body)
+	mut rep := Input{}
+	rep.keys[0] = .enter
+	rep.key_repeat[0] = true
+	rep.key_count = 1
+	wgt_frame(mut c, rep, body)
+	assert t.ok == 0
+}

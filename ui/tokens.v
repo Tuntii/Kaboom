@@ -94,6 +94,7 @@ pub const toolbar_h = f32(40)
 pub const statusbar_h = f32(24)
 pub const icon_size = f32(16)
 pub const splitter_w = f32(4)
+pub const drag_threshold = f32(3) // sürükleme eşiği (mantıksal px): küçük titremeyi tıklamadan ayırır
 pub const num_field_w = f32(96)
 pub const label_col_w = f32(56) // özellik satırı etiket sütunu
 pub const menu_min_w = f32(160) // açılır menünün asgari genişliği

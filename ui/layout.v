@@ -435,7 +435,7 @@ fn (mut c Context) paint(i int, clip Rect) {
 		if (u32(b.bg) & 0xFF) != 0 || (b.border_w > 0 && (u32(b.border) & 0xFF) != 0) {
 			c.emit_rect(r, clip, b)
 		}
-		if id != 0 && id == c.focus {
+		if id != 0 && id == c.focus && c.focus_visible {
 			c.emit_rect(Rect{
 				x: r.x - 1
 				y: r.y - 1
@@ -461,13 +461,22 @@ fn (mut c Context) paint(i int, clip Rect) {
 	}
 }
 
+// Kenar ve çizgi kalınlığı: en az 1, tamsayı fiziksel piksel (0 ise yok); konumdan bağımsız.
+fn phys_thick(t f32, sc f32) f32 {
+	if t <= 0 {
+		return 0
+	}
+	return f32(math.max(f64(1), math.floor(f64(t * sc) + 0.5)))
+}
+
 // Kenarlar fiziksel piksele yuvarlanır; komut sırası çizim sırası.
+// Tek mantıksal piksellik çizgi (ayırıcı, tutamak, imleç): kalınlığı konumdan bağımsız phys_thick.
 fn (mut c Context) emit_rect(r Rect, clip Rect, b Box) {
 	sc := c.scale
 	x0 := snap(r.x * sc)
 	y0 := snap(r.y * sc)
-	x1 := snap((r.x + r.w) * sc)
-	y1 := snap((r.y + r.h) * sc)
+	x1 := if r.w > 0 && r.w <= 1 { x0 + phys_thick(r.w, sc) } else { snap((r.x + r.w) * sc) }
+	y1 := if r.h > 0 && r.h <= 1 { y0 + phys_thick(r.h, sc) } else { snap((r.y + r.h) * sc) }
 	wu, hu := c.atl.white_uv()
 	c.list.push(DrawCmd{
 		x:            x0
@@ -485,7 +494,7 @@ fn (mut c Context) emit_rect(r Rect, clip Rect, b Box) {
 		color:        u32(b.bg)
 		border_color: u32(b.border)
 		radius:       b.radius * sc
-		border:       b.border_w * sc
+		border:       phys_thick(b.border_w, sc)
 		kind:         u32(DrawKind.rect)
 	})
 }

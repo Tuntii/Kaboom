@@ -1,5 +1,7 @@
 module ui
 
+import math
+
 const fnv_offset = u32(2166136261)
 const fnv_prime = u32(16777619)
 
@@ -120,6 +122,10 @@ mut:
 	num_cur      int
 	num_fresh    bool // sayı alanı: ilk yazım metni değiştirir (yazım gelene kadar kalır)
 	num_moved    bool // bu basışta sürükleme oldu mu (tıklama düzenlemeye geçmez)
+	focus_visible bool // odak klavyeyle (Tab) geldi: halka çizilir, Enter/Space etkinleştirir
+	press_x      f32 // sol tuş basış konumu (sürükleme eşiği için)
+	press_y      f32
+	drag_on      bool // etkin basış eşiği aştı: sürükleme sürüyor
 	num_bufs     [64][32]u8 // sayı alanı görüntü metinleri; kare başına döner
 	num_n        int
 	menu_cur     u32 // son menu_button kimliği (menu_item kapatır)
@@ -165,9 +171,12 @@ pub fn (mut c Context) begin(input Input, width f32, height f32, scale f32) {
 	c.num_n = 0
 	c.tip_shown = false
 	c.list.clear()
+	c.in_prop = false
 	c.tab_focus()
-	if input.pressed[0] && c.hit_prev == 0 {
+	// Her basış odağı bırakır; metin ve sayı alanları kendi basışlarında yeniden alır.
+	if input.pressed[0] {
 		c.focus = 0
+		c.focus_visible = false
 	}
 	root := c.alloc(0, Box{
 		dir:    .column
@@ -179,6 +188,7 @@ pub fn (mut c Context) begin(input Input, width f32, height f32, scale f32) {
 }
 
 pub fn (mut c Context) end() &DrawList {
+	c.drop_stale()
 	c.layout()
 	c.paint(0, Rect{
 		w: c.vw
@@ -359,13 +369,14 @@ pub fn (c &Context) node_count() u32 {
 }
 
 // Etkileşim: hover, basış, tıklama (basış ve bırakma aynı kimlikte), sürükleme.
-// Kimlik odaklanabilirse çizim sırasına eklenir (Tab için).
+// Kimlik odaklanabilirse çizim sırasına eklenir (Tab için). Fare basışı yalnızca metin ve sayı alanlarına odak verir.
 pub fn (mut c Context) interact(id u32, focusable bool) Interaction {
-	return c.interact_kb(id, focusable, true)
+	return c.interact_kb(id, focusable, true, false)
 }
 
 // key_click false: odaktaki Enter/Space tıklama üretmez (metin ve sayı alanları kendi tuşlarını işler).
-fn (mut c Context) interact_kb(id u32, focusable bool, key_click bool) Interaction {
+// mouse_focus: basış bu kimliğe odak verir (metin ve sayı alanları).
+fn (mut c Context) interact_kb(id u32, focusable bool, key_click bool, mouse_focus bool) Interaction {
 	c.touch(id)
 	if focusable && c.focus_n < c.focus_cur.len {
 		c.focus_cur[c.focus_n] = id
@@ -374,22 +385,38 @@ fn (mut c Context) interact_kb(id u32, focusable bool, key_click bool) Interacti
 	hovered := c.hit_prev == id && c.hovered_prev(id)
 	if c.inp.pressed[0] && hovered {
 		c.active = id
-		if focusable {
+		c.press_x = c.inp.mouse_x
+		c.press_y = c.inp.mouse_y
+		c.drag_on = false
+		if mouse_focus {
 			c.focus = id
 		}
 	}
 	mut clicked := false
 	mut dragging := false
+	mut dx := c.drag_dx
+	mut dy := c.drag_dy
 	if c.active == id {
 		if c.inp.released[0] {
 			clicked = hovered
 			c.active = 0
-		} else if c.inp.down[0] && !c.inp.pressed[0] && (c.drag_dx != 0 || c.drag_dy != 0) {
-			dragging = true
+			c.drag_on = false
+		} else if c.inp.down[0] && !c.inp.pressed[0] {
+			// Eşik: basıştan kümülatif hareket; eşiği geçen karede tam ofset, sonra kare farkı.
+			if !c.drag_on {
+				ox := c.inp.mouse_x - c.press_x
+				oy := c.inp.mouse_y - c.press_y
+				if math.abs(ox) >= drag_threshold || math.abs(oy) >= drag_threshold {
+					c.drag_on = true
+					dx = ox
+					dy = oy
+				}
+			}
+			dragging = c.drag_on
 		}
 	}
-	// Odaktayken Enter/Space etkinleştirir (klavye erişilebilirliği).
-	if key_click && focusable && c.focus == id && (c.key_pressed(.enter) || c.key_pressed(.space)) {
+	// Odaktayken (yalnızca klavyeyle gelmişse) Enter/Space etkinleştirir (klavye erişilebilirliği).
+	if key_click && focusable && c.focus == id && c.focus_visible && (c.key_pressed(.enter) || c.key_pressed(.space)) {
 		clicked = true
 	}
 	return Interaction{
@@ -397,8 +424,8 @@ fn (mut c Context) interact_kb(id u32, focusable bool, key_click bool) Interacti
 		pressed:  c.active == id && c.inp.down[0]
 		clicked:  clicked
 		dragging: dragging
-		drag_dx:  if dragging { c.drag_dx } else { f32(0) }
-		drag_dy:  if dragging { c.drag_dy } else { f32(0) }
+		drag_dx:  if dragging { dx } else { f32(0) }
+		drag_dy:  if dragging { dy } else { f32(0) }
 		focused:  c.focus == id
 	}
 }
@@ -543,14 +570,34 @@ fn (mut c Context) touch(id u32) int {
 	return h
 }
 
-// Bu karede k tuşu basıldı mı (Input.keys kenar olayları).
+// Bu karede k tuşu basıldı mı (Input.keys kenar olayları; otomatik tekrar sayılmaz).
 fn (c &Context) key_pressed(k Key) bool {
 	for i in 0 .. c.inp.key_count {
-		if c.inp.keys[i] == k {
+		if c.inp.keys[i] == k && !c.inp.key_repeat[i] {
 			return true
 		}
 	}
 	return false
+}
+
+// Bu karede kimlik çizildi mi (touch ile işaretlenir). Çizilmeyen kimliğin odağı ve düzenlemesi atılır.
+fn (c &Context) seen_now(id u32) bool {
+	h := c.probe(id)
+	return h >= 0 && c.states[h].id == id && c.states[h].seen == c.frame
+}
+
+// Çizilmeyen alanın bekleyen düzenlemesi atılır (değer uygulanmaz); eski kimlik sonraki alana karışmaz.
+fn (mut c Context) drop_stale() {
+	if c.focus != 0 && !c.seen_now(c.focus) {
+		c.focus = 0
+		c.focus_visible = false
+	}
+	if c.num_id != 0 && !c.seen_now(c.num_id) {
+		c.num_id = 0
+	}
+	if c.txt_id != 0 && !c.seen_now(c.txt_id) {
+		c.txt_id = 0
+	}
 }
 
 // Önceki karenin dikdörtgeni imleci içeriyor mu.
@@ -577,6 +624,7 @@ fn (mut c Context) tab_focus() {
 		(cur + 1) % n
 	}
 	c.focus = c.focus_prev[next]
+	c.focus_visible = true
 }
 
 // Görülen düğümlerin dikdörtgenleri yazılır; sonra iki kare görülmeyenler atılır.

@@ -175,7 +175,7 @@ pub fn parse_f32(s string) ?f32 {
 		digits++
 		i++
 	}
-	if i < s.len && s[i] == `.` {
+	if i < s.len && (s[i] == `.` || s[i] == `,`) { // Türkçe numpad ondalık virgülü
 		i++
 		for i < s.len && s[i] >= `0` && s[i] <= `9` {
 			mant = mant * 10 + f64(s[i] - `0`)
@@ -244,6 +244,10 @@ fn edit_keys(mut buf TextBuf, cur0 int, inp Input) (EditOut, int) {
 		}
 	}
 	for i in 0 .. inp.key_count {
+		// Otomatik tekrar yalnızca düzenleme tuşlarında (ok, Backspace, Delete, Home, End) etkili.
+		if inp.key_repeat[i] && (inp.keys[i] == .enter || inp.keys[i] == .escape) {
+			continue
+		}
 		match inp.keys[i] {
 			.enter {
 				out.enter = true
@@ -360,7 +364,7 @@ fn num_clamp(v f32, min f32, max f32) f32 {
 // Yatay kaydırma: imleç iç genişlikte kalır (kalıcı ofset, kutu scroll_x ile uygular).
 pub fn (mut c Context) text_field(label string, mut buf TextBuf, width f32) bool {
 	id := c.id(label)
-	it := c.interact_kb(id, true, false)
+	it := c.interact_kb(id, true, false, true)
 	if it.focused {
 		if c.txt_id != id {
 			c.txt_id = id
@@ -426,7 +430,7 @@ pub fn (mut c Context) text_field(label string, mut buf TextBuf, width f32) bool
 pub fn (mut c Context) number_field(label string, mut value &f32, unit string, decimals int, step f32, min f32, max f32) bool {
 	id := c.id(label)
 	mut editing := c.num_id == id
-	it := c.interact_kb(id, true, !editing)
+	it := c.interact_kb(id, true, !editing, true)
 	if c.inp.pressed[0] && it.hovered {
 		c.num_moved = false
 	}

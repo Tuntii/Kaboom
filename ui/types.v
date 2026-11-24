@@ -62,6 +62,7 @@ pub mut:
 	released   [3]bool
 	wheel_y    f32
 	keys       [16]Key
+	key_repeat [16]bool // keys[i] bir otomatik tekrar mı (basılı tutma)
 	key_count  int
 	chars      [32]u32
 	char_count int

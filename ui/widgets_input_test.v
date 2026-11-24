@@ -639,3 +639,167 @@ mut:
 	menu_w f32
 	item_w f32
 }
+
+fn in_key_rep(k Key) Input {
+	mut inp := in_key(k)
+	inp.key_repeat[0] = true
+	return inp
+}
+
+// Sayı alanı gizlenince bekleyen düzenleme atılır; ajan değeri değiştirir, yeniden gösterilen alan eski metni yazmaz.
+fn test_hidden_number_edit_is_discarded() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 3
+		open:  true
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if tp.open {
+			c.push_id(1)
+			if c.number_field('x', mut &tp.value, '', 0, 1, 0, 0) {
+				tp.changed++
+			}
+			c.pop_id()
+		}
+	}
+	in_tap(mut c, body, 20, 10)
+	wgt_frame(mut c, in_text('9'), body)
+	assert c.num_id != 0
+	t.open = false
+	wgt_frame(mut c, Input{}, body)
+	assert c.num_id == 0
+	t.value = 5
+	t.open = true
+	wgt_frame(mut c, Input{}, body)
+	in_tap(mut c, body, 20, 10)
+	wgt_frame(mut c, in_key(.enter), body)
+	assert t.value == 5
+	assert t.changed == 0
+}
+
+// Odaklanamaz kimlikli panele basış odağı bırakır; bekleyen sayı düzenlemesi bu blurda uygulanır.
+fn test_click_on_panel_blurs_number_field() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.number_field('n', mut &tp.value, '', 0, 1, 0, 0) {
+			tp.changed++
+		}
+		c.open('scene', Box{
+			width:  fixed(200)
+			height: fixed(100)
+		})
+		c.close()
+	}
+	in_tap(mut c, body, 20, 10)
+	wgt_frame(mut c, in_text('9'), body)
+	wgt_frame(mut c, mouse_at(60, 60), body)
+	wgt_frame(mut c, press_at(60, 60), body)
+	assert c.focused_id() == 0
+	wgt_frame(mut c, release_at(60, 60), body)
+	assert t.value == 9
+	assert t.changed == 1
+}
+
+// 2 px titreme tıklamayı sürükleme yapmaz: değer aynı kalır, düzenleme açılır.
+fn test_number_jitter_click_enters_edit_without_change() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: 5
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.number_field('n', mut &tp.value, '', 0, 1, 0, 0) {
+			tp.changed++
+		}
+	}
+	wgt_frame(mut c, mouse_at(20, 10), body)
+	wgt_frame(mut c, press_at(20, 10), body)
+	mut mv := mouse_at(22, 10)
+	mv.down[0] = true
+	wgt_frame(mut c, mv, body)
+	wgt_frame(mut c, release_at(22, 10), body)
+	assert c.num_id == c.id('n')
+	assert t.value == 5
+	assert t.changed == 0
+}
+
+// Eşiği (3 px) aşan sürükleme: ilk delta basıştan ölçülür; 10 px, adım 1 → 2.5.
+fn test_number_drag_past_threshold_changes_value() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.number_field('n', mut &tp.value, '', 0, 1, 0, 0) {
+			tp.changed++
+		}
+	}
+	wgt_frame(mut c, mouse_at(20, 10), body)
+	wgt_frame(mut c, press_at(20, 10), body)
+	mut mv := mouse_at(30, 10)
+	mv.down[0] = true
+	wgt_frame(mut c, mv, body)
+	wgt_frame(mut c, release_at(30, 10), body)
+	assert t.value == 2.5
+	assert t.changed == 1
+	assert c.num_id == 0
+}
+
+// Ondalık virgül (Türkçe klavye numpad): 2,5 → 2.5; birden fazla virgül geçersiz.
+fn test_parse_f32_accepts_decimal_comma() {
+	assert in_parse('2,5') == 2.5
+	assert in_no_parse('1,2,3')
+}
+
+// Bitmemiş özellik satırı (property_row_end yok) sonraki karede sayı alanını yaymaz.
+fn test_in_prop_reset_each_frame() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if tp.open {
+			c.property_row_begin('satir')
+		} else {
+			if c.number_field('n', mut &tp.value, '', 0, 1, 0, 0) {
+				tp.changed++
+			}
+		}
+	}
+	t.open = true
+	wgt_frame(mut c, Input{}, body)
+	t.open = false
+	wgt_frame(mut c, Input{}, body)
+	mut fi := -1
+	for i in 0 .. c.n {
+		if c.nodes[i].id == c.id('n') && c.nodes[i].kind == .plain {
+			fi = i
+		}
+	}
+	assert fi >= 0
+	assert c.nodes[fi].sz[0] == num_field_w
+}
+
+fn test_backspace_repeat_deletes_again() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		if c.text_field('alan', mut tp.buf, 120) {
+			tp.enter++
+		}
+	}
+	wgt_frame(mut c, in_key(.tab), body)
+	wgt_frame(mut c, in_text('abc'), body)
+	wgt_frame(mut c, in_key(.backspace), body)
+	assert t.buf.str() == 'ab'
+	wgt_frame(mut c, in_key_rep(.backspace), body)
+	assert t.buf.str() == 'a'
+}

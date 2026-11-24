@@ -1,5 +1,7 @@
 module ui
 
+import math
+
 fn layout_atlas(scale f32) Atlas {
 	return Atlas.build(scale) or { panic(err) }
 }
@@ -368,4 +370,41 @@ fn layout_node(c &Context, id u32) Node {
 		}
 	}
 	panic('düğüm yok')
+}
+// Ayırıcı ve kenarlık: fiziksel kalınlık her konumda aynı tamsayı; 1.25 ve 1.5 ölçeklerinde.
+fn test_hairlines_and_borders_integer_thickness() {
+	for sc in [f32(1.25), f32(1.5)] {
+		want := f32(math.max(f64(1), math.floor(1 * f64(sc) + 0.5)))
+		mut atl := layout_atlas(sc)
+		mut c := Context.new(&atl, 256, 256) or { panic(err) }
+		c.begin(Input{}, 200, 200, sc)
+		for i in 0 .. 4 {
+			c.leaf(.plain, Box{
+				width:  fixed(10)
+				height: fixed(7.3 + 2.1 * f32(i))
+			})
+			c.separator()
+		}
+		c.open('bx', Box{
+			width:    fixed(50)
+			height:   fixed(20)
+			bg:       surface_2
+			border:   border_strong
+			border_w: 1
+		})
+		c.close()
+		c.end()
+		mut seps := 0
+		for k in 0 .. c.list.len() {
+			cmd := c.list.at(k)
+			if cmd.color == u32(border) {
+				seps++
+				assert cmd.h == want
+			}
+			if cmd.color == u32(surface_2) {
+				assert cmd.border == want
+			}
+		}
+		assert seps == 4
+	}
 }
