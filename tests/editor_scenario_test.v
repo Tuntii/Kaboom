@@ -2,6 +2,7 @@ module main
 
 import os
 import image
+import time
 
 // vcore editor: stdin'den üç Transform+Sprite varlığı ve bir component.set gelir, gizli pencerede 5 kare çizilir.
 // Sahne alanı ortasındaki piksel kırmızı sprite'ı, ikinci varlık (yeşil) ajan değişikliğiyle sola kaymış olmalı;
@@ -39,7 +40,7 @@ fn test_editor_scenario_sprite_in_scene_area() {
 		os.chdir(old_wd) or {}
 	}
 
-	run := os.execute('"${exe}" editor --hidden --width 640 --height 400 --scale 1 --frames 5 --screenshot "${shot_path}" < "${input}"')
+	run := os.execute('"${exe}" editor --hidden --width 640 --height 400 --scale 1 --frames 5 --screenshot-after-eof --screenshot "${shot_path}" < "${input}"')
 	if run.exit_code == 3 && run.output.contains('GL yok') {
 		eprintln('atlandi: GL yok: ${run.output.trim_space()}')
 		return
@@ -107,4 +108,42 @@ fn test_editor_select_missing_row_exits_1() {
 	assert run.exit_code == 1, 'çıkış kodu 1 olmalı: ${run.exit_code} ${run.output}'
 	assert run.output.contains('satır yok'), run.output
 	assert !os.exists(shot_path), 'hata durumunda ekran görüntüsü yazılmamalı'
+}
+
+// Stdin açık kalan (boru kapatılmaz) süreç de --frames ile ekran görüntüsü alıp çıkar: EOF gerekmez.
+fn test_editor_screenshot_by_frames_with_open_stdin() {
+	tmp := os.join_path(os.temp_dir(), 'vcore_m4c10_open_${os.getpid()}')
+	os.mkdir_all(tmp) or { panic(err) }
+	defer {
+		os.rmdir_all(tmp) or {}
+	}
+	exe := os.join_path(tmp, 'vcore.exe')
+	build := os.execute('"${@VEXE}" -gc none -subsystem console -o "${exe}" "${@VMODROOT}/cmd_main"')
+	assert build.exit_code == 0, build.output
+
+	shot_path := os.join_path(tmp, 'open.png')
+	mut p := os.new_process(exe)
+	p.set_args(['editor', '--hidden', '--width', '320', '--height', '200', '--scale', '1', '--frames', '3',
+		'--screenshot', shot_path])
+	p.set_redirect_stdio()
+	p.run()
+	// Stdin boru açık; kapatılmaz. Süre sınırı: aşılırsa süreç öldürülür ve test başarısız olur.
+	mut waited := 0
+	for p.is_alive() && waited < 15000 {
+		time.sleep(50 * time.millisecond)
+		waited += 50
+	}
+	timed_out := p.is_alive()
+	if timed_out {
+		p.signal_kill()
+	}
+	p.wait()
+	out := p.stdout_slurp() + p.stderr_slurp()
+	if p.code == 3 && out.contains('GL yok') {
+		eprintln('atlandi: GL yok: ${out.trim_space()}')
+		return
+	}
+	assert !timed_out, 'süreç stdin açıkken çıkmadı (kare sayısında yakalama bekleniyordu)'
+	assert p.code == 0, out
+	assert os.exists(shot_path), 'PNG yazılmalı'
 }

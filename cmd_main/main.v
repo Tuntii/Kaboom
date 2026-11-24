@@ -8,7 +8,7 @@ const usage_text = 'kullanim: vcore headless [--capacity N]
        vcore run [--capacity N] [--width W] [--height H] [--hidden] [--paused]
        vcore gallery [--page editor|widgets] [--width W] [--height H] [--scale S] [--hidden] [--frames N]
                      [--screenshot PATH] [--open-menu] [--hover-tooltip]
-       vcore editor [scene] [--width W] [--height H] [--scale S] [--hidden] [--frames N] [--screenshot PATH]
+       vcore editor [scene] [--width W] [--height H] [--scale S] [--hidden] [--frames N] [--screenshot PATH] [--screenshot-after-eof]
        (--scale S: pencere W*S x H*S fiziksel piksel, DPI-farkında değil; yakalama her makinede aynı)'
 
 // Girdi: vcore headless | vcore run. headless stdin'den satır okur, her yanıtı tek satır yazar.

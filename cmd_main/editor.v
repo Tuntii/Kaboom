@@ -10,7 +10,7 @@ import sim
 import time
 import ui
 
-// Editör penceresi: `vcore editor [scene] [--width W --height H --scale S --hidden --frames N --screenshot PATH]`.
+// Editör penceresi: `vcore editor [scene] [--width W --height H --scale S --hidden --frames N --screenshot PATH [--screenshot-after-eof]]`.
 // Mantık editor/ modülünde; burada yalnız pencere, GL çizimi ve stdin kanalı var.
 const editor_nodes = u32(4096)
 const editor_cmds = u32(16384)
@@ -24,6 +24,8 @@ mut:
 	hidden     bool
 	frames     int = 3
 	screenshot string
+	// Ekran görüntüsünü stdin EOF'u ve boşalmış ajan kanalını bekleyerek al (istekli ajan testleri için).
+	screenshot_after_eof bool
 	// Senaryo bayrakları (editor_script.v): UI'ye sentetik girdi; editörün iç durumuna dokunmaz.
 	select      int = -1 // N. satırdaki varlığı seç (sahnede tıklanır)
 	open_menu   bool     // Bileşen ekle menüsünü aç
@@ -46,6 +48,11 @@ fn parse_editor_opts(args []string) EditorOpts {
 	for i < args.len {
 		if args[i] == '--hidden' {
 			o.hidden = true
+			i++
+			continue
+		}
+		if args[i] == '--screenshot-after-eof' {
+			o.screenshot_after_eof = true
 			i++
 			continue
 		}
@@ -217,9 +224,9 @@ fn run_editor(args []string) {
 			view_h: fr.cam_view_h
 		}
 
-		// Ekran görüntüsü stdin EOF'tan sonra alınır: o noktada tüm istekler işlenmiş ve yanıtları yazılmıştır
-		// (drain_agent eof'u yalnız kanal boşaldıktan sonra döndürür). Stdin açık kalan ajan görüntüyü beklemeli.
-		if o.screenshot != '' && frame + 1 >= o.frames && eof {
+		// Ekran görüntüsü kare sayısında alınır (stdin'den bağımsız). --screenshot-after-eof ile önce stdin EOF'u
+		// ve boşalmış kanal beklenir: o noktada tüm istekler işlenmiş ve yanıtları yazılmıştır.
+		if o.screenshot != '' && frame + 1 >= o.frames && (eof || !o.screenshot_after_eof) {
 			// Ekran görüntüsü aynı kareyi FBO'ya çizer (gallery ile aynı yol); pencere hemen kapanır.
 			fbo.resize(fw, fh) or {
 				eprintln('vcore: ${err}')
