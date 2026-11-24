@@ -431,6 +431,8 @@ fn (mut s Server) sim_reset() !Val {
 	}
 	s.region = region
 	s.engine = engine
+	// Yeni motorun geçmişi boş ve derinliği 0: açık editör grubu da artık yok.
+	s.editor_depth = 0
 	return empty_object()
 }
 

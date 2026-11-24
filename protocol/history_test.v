@@ -443,3 +443,37 @@ fn test_undo_records_requester_source() {
 	assert rec.entries[n - 1].cmd.kind == .set_field
 	assert rec.entries[n - 2].cmd.source == .agent
 }
+
+// İç içe editör grupları: iç end sayacı sıfırlamaz; yalnız son end geri almayı yeniden açar.
+fn test_undo_refused_under_nested_editor_groups() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	e := spawn_at(mut s, 0)
+	set_x(mut s, e, 1, .agent)
+	s.history_begin_group()
+	s.history_begin_group()
+	s.history_end_group()
+	assert !hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert s.engine.history.undo_len() == 2
+	assert tr_x(mut s, e) == 1
+	s.history_end_group()
+	assert hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert tr_x(mut s, e) == 0
+}
+
+// sim.reset açık grubu da bitirir: sonrasında agent geri almaları reddedilmez.
+fn test_sim_reset_clears_open_editor_group() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	s.history_begin_group()
+	_ = hcall(mut s, rq(1, '"method":"sim.reset"'))
+	f := spawn_at(mut s, 3)
+	set_x(mut s, f, 9, .agent)
+	// Yazım sonrası geri alma uygulanmalı (applied true): yığın boş olduğu için değil, koruma yüzünden reddedilmiyor.
+	assert hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert tr_x(mut s, f) == 3
+}

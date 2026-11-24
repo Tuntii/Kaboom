@@ -22,7 +22,7 @@ pub fn (mut s Server) history_redo() !Val {
 
 fn (mut s Server) history_run(undo bool) !Val {
 	// Açık editör grubunun içinde geri alma tanımsızdır: yığınlara dokunmadan reddedilir.
-	if s.editor_group {
+	if s.editor_depth > 0 {
 		return history_result(false, 0, 0, []IdPair{})
 	}
 	popped := if undo { s.engine.history.pop_undo() } else { s.engine.history.pop_redo() }
@@ -42,12 +42,15 @@ fn (mut s Server) history_run(undo bool) !Val {
 
 // Editör API'si (protokol komutu değil): açık grup, süreç içi istekleri tek geri alma adımında toplar.
 pub fn (mut s Server) history_begin_group() {
-	s.editor_group = true
+	s.editor_depth++
 	s.engine.history.begin_group()
 }
 
+// Derinlik sıfırda kalır: fazla end çağrısı sayacı eksiye düşürmez.
 pub fn (mut s Server) history_end_group() {
-	s.editor_group = false
+	if s.editor_depth > 0 {
+		s.editor_depth--
+	}
 	s.engine.history.end_group()
 }
 
@@ -59,9 +62,10 @@ pub fn (mut s Server) history_cancel_group() ! {
 		return error('history: open group overflowed the staging area; nothing was undone, end the group normally')
 	}
 	view := s.engine.history.staged()
-	mut blocks := copy_blocks(view, .editor)
+	// Komutlar iptali isteyenin kaynağını taşır (R3); iptal sonrası derinlik sıfırdır.
+	mut blocks := copy_blocks(view, s.source)
 	s.engine.history.abandon_group()
-	s.editor_group = false
+	s.editor_depth = 0
 	s.engine.history.set_mode(.off)
 	_, _, _ = s.apply_blocks(mut blocks)
 	s.engine.history.set_mode(.normal)

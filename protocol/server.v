@@ -62,8 +62,9 @@ mut:
 	is_paused  bool
 	// İsteğin kaynağı (agent: stdin, editor: süreç içi); handle_from istek boyunca ayarlar.
 	source cmd.Source
-	// Açık editör grubu (history_begin_group ile); geri al/yinele bu sürede reddedilir.
-	editor_group bool
+	// Açık editör grubu derinliği (history_begin_group ile); >0 iken geri al/yinele reddedilir.
+	// Motor geçmişi yeniden kurulduğunda (sim.reset) sıfırlanır: iki kaynak tek sayaç olarak kalır.
+	editor_depth u32
 	// Ekran görüntüsü kancası: yalnız pencere varken (vcore run) kurulur.
 	capture ?fn (path string) !(int, int)
 }
