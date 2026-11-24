@@ -45,6 +45,8 @@ fn test_editor_scenario_sprite_in_scene_area() {
 		return
 	}
 	assert run.exit_code == 0, run.output
+	// Bariyer: ekran görüntüsü stdin EOF'tan sonra alınır; dört istek de yanıtlanmış olmalı (stdout'ta 4 yanıt).
+	assert run.output.count('"jsonrpc"') == 4, 'dört yanıt bekleniyor: ${run.output}'
 
 	png := os.read_bytes(shot_path) or { panic('editor.png okunamadi: ${err}') }
 	w, h, px := image.decode_png_stored(png) or { panic('PNG cozulemedi: ${err}') }
@@ -74,4 +76,35 @@ fn test_editor_scenario_sprite_in_scene_area() {
 		}
 	}
 	assert text_px > 20, 'durum cubugunda metin pikseli yok: ${text_px}'
+}
+
+// --select N, sahnede satır yoksa hata verip 1 ile çıkar (sessiz seçimsiz ekran görüntüsü üretmez).
+fn test_editor_select_missing_row_exits_1() {
+	tmp := os.join_path(os.temp_dir(), 'vcore_m4c10_sel_${os.getpid()}')
+	os.mkdir_all(tmp) or { panic(err) }
+	defer {
+		os.rmdir_all(tmp) or {}
+	}
+	exe := os.join_path(tmp, 'vcore.exe')
+	build := os.execute('"${@VEXE}" -gc none -subsystem console -o "${exe}" "${@VMODROOT}/cmd_main"')
+	assert build.exit_code == 0, build.output
+
+	input := os.join_path(tmp, 'in.jsonl')
+	os.write_file(input, '{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":0,"y":0},"Sprite":{"size":2}}}}\n') or {
+		panic(err)
+	}
+	shot_path := os.join_path(tmp, 'sel.png')
+	old_wd := os.getwd()
+	os.chdir(tmp) or { panic(err) }
+	defer {
+		os.chdir(old_wd) or {}
+	}
+	run := os.execute('"${exe}" editor --hidden --width 640 --height 400 --scale 1 --select 5 --screenshot "${shot_path}" < "${input}"')
+	if run.exit_code == 3 && run.output.contains('GL yok') {
+		eprintln('atlandi: GL yok: ${run.output.trim_space()}')
+		return
+	}
+	assert run.exit_code == 1, 'çıkış kodu 1 olmalı: ${run.exit_code} ${run.output}'
+	assert run.output.contains('satır yok'), run.output
+	assert !os.exists(shot_path), 'hata durumunda ekran görüntüsü yazılmamalı'
 }

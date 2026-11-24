@@ -104,6 +104,11 @@ fn (s &EditorScript) active() bool {
 	return s.steps.len > 0
 }
 
+// Senaryo hâlâ girdi üretiyor mu (bekleme ya da adım kaldı). Bittikten sonra çağıran gerçek pencere girdisine döner.
+fn (s &EditorScript) running() bool {
+	return s.active() && (s.warm < script_warm_frames || s.cur < s.steps.len)
+}
+
 // Bu karenin girdisi. Adımlar bitince ya da bekleme sürerken fare dışarıdadır.
 fn (mut s EditorScript) input(c &ui.Context, ed &editor.Editor, srv &protocol.Server, fr editor.EditorFrame, now f64) ui.Input {
 	mut inp := ui.Input{
@@ -135,7 +140,14 @@ fn (mut s EditorScript) input(c &ui.Context, ed &editor.Editor, srv &protocol.Se
 		else {
 			if s.sub == 0 {
 				// Hedef yalnız ilk karede çözülür: sonraki kareler aynı noktaya basar.
-				s.mx, s.my = s.target(c, ed, srv, fr, st)
+				ok, mx, my := s.target(c, ed, srv, fr, st)
+				if !ok && st.kind == .select_row {
+					// Sessiz seçimsiz ekran görüntüsü yanlış kanıt olur: hata ver ve çık.
+					eprintln('vcore: --select ${st.n}: satır yok (sahnede ${srv.world().store(ecs.transform_id).len()} varlık)')
+					exit(1)
+				}
+				s.mx = mx
+				s.my = my
 			}
 			inp.mouse_x = s.mx
 			inp.mouse_y = s.my
@@ -159,35 +171,36 @@ fn (mut s EditorScript) advance_step() {
 	s.sub = 0
 }
 
-// Hedef noktası; bulunamazsa (-1, -1): fare dışarıda kalır ve adım boşa gider (ekran görüntüsü yine alınır).
-fn (s &EditorScript) target(c &ui.Context, ed &editor.Editor, srv &protocol.Server, fr editor.EditorFrame, st EditorStep) (f32, f32) {
+// Hedef noktası; bulunamazsa ok false ve (-1, -1): fare dışarıda kalır (--select dışında adım boşa gider).
+fn (s &EditorScript) target(c &ui.Context, ed &editor.Editor, srv &protocol.Server, fr editor.EditorFrame, st EditorStep) (bool, f32, f32) {
 	match st.kind {
 		.select_row {
 			ok, x, y := row_world(srv, st.n)
 			if !ok {
-				return f32(-1), f32(-1)
+				return false, f32(-1), f32(-1)
 			}
 			cam := editor.EditorCamera{
 				cx:     fr.cam_cx
 				cy:     fr.cam_cy
 				view_h: fr.cam_view_h
 			}
-			return cam.world_to_screen(fr.scene, x, y)
+			sx, sy := cam.world_to_screen(fr.scene, x, y)
+			return true, sx, sy
 		}
 		.field {
 			comp := ecs.sprite_id
-			cs := srv.registry().component(comp) or { return f32(-1), f32(-1) }
-			fi := cs.field_index('r') or { return f32(-1), f32(-1) }
-			r := ed.field_rect(c, comp, fi) or { return f32(-1), f32(-1) }
-			return r.x + r.w / 2, r.y + r.h / 2
+			cs := srv.registry().component(comp) or { return false, f32(-1), f32(-1) }
+			fi := cs.field_index('r') or { return false, f32(-1), f32(-1) }
+			r := ed.field_rect(c, comp, fi) or { return false, f32(-1), f32(-1) }
+			return true, r.x + r.w / 2, r.y + r.h / 2
 		}
 		.add_menu {
-			r := ed.add_component_rect(c) or { return f32(-1), f32(-1) }
-			return r.x + r.w / 2, r.y + r.h / 2
+			r := ed.add_component_rect(c) or { return false, f32(-1), f32(-1) }
+			return true, r.x + r.w / 2, r.y + r.h / 2
 		}
 		else {
-			r := c.last_rect(st.label) or { return f32(-1), f32(-1) }
-			return r.x + r.w / 2, r.y + r.h / 2
+			r := c.last_rect(st.label) or { return false, f32(-1), f32(-1) }
+			return true, r.x + r.w / 2, r.y + r.h / 2
 		}
 	}
 }

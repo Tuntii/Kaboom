@@ -199,7 +199,8 @@ fn run_editor(args []string) {
 		acc = rem
 		alpha := if srv.paused() { f32(1.0) } else { f32(rem) / f32(sim.step_ns) }
 
-		inp := if script.active() {
+		// Senaryo bitince (ya da hiç yoksa) gerçek pencere girdisi geri gelir.
+		inp := if script.running() {
 			script.input(&ctx, &ed, &srv, prev, f64(now) / 1e6)
 		} else {
 			to_ui_input(win.input(), scale, f64(now) / 1e6)
@@ -216,7 +217,9 @@ fn run_editor(args []string) {
 			view_h: fr.cam_view_h
 		}
 
-		if o.screenshot != '' && frame + 1 >= o.frames {
+		// Ekran görüntüsü stdin EOF'tan sonra alınır: o noktada tüm istekler işlenmiş ve yanıtları yazılmıştır
+		// (drain_agent eof'u yalnız kanal boşaldıktan sonra döndürür). Stdin açık kalan ajan görüntüyü beklemeli.
+		if o.screenshot != '' && frame + 1 >= o.frames && eof {
 			// Ekran görüntüsü aynı kareyi FBO'ya çizer (gallery ile aynı yol); pencere hemen kapanır.
 			fbo.resize(fw, fh) or {
 				eprintln('vcore: ${err}')
