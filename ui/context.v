@@ -125,6 +125,7 @@ mut:
 	menu_cur     u32 // son menu_button kimliği (menu_item kapatır)
 	menu_alpha   f32 // açık menünün opaklığı
 	tip_shown    bool
+	in_prop      bool // özellik satırı içinde: sayı alanı panelin kalanını doldurur
 }
 
 pub fn Context.new(atlas &Atlas, max_nodes u32, max_cmds u32) !Context {

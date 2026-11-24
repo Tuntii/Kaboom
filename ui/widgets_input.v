@@ -325,9 +325,9 @@ fn text_inner(width f32) f32 {
 	return width - 2 * space_2 - 1
 }
 
-fn (mut c Context) begin_num(id u32, v f32) {
+fn (mut c Context) begin_num(id u32, v f32, decimals int) {
 	mut tmp := [32]u8{}
-	n := format_f32(v, num_dec(v), mut tmp)
+	n := format_f32(v, decimals, mut tmp)
 	c.num_buf.set(unsafe { tos(&tmp[0], n) })
 	c.num_cur = c.num_buf.len
 	c.num_fresh = true
@@ -340,11 +340,6 @@ fn (mut c Context) end_num(id u32) {
 	if c.focus == id {
 		c.focus = 0
 	}
-}
-
-// Tam sayı ise ondalıksız, değilse iki ondalık.
-fn num_dec(v f32) int {
-	return if v == f32(math.floor(f64(v))) { 0 } else { 2 }
 }
 
 // min == max == 0 sınırsız.
@@ -425,9 +420,10 @@ pub fn (mut c Context) text_field(label string, mut buf TextBuf, width f32) bool
 }
 
 // Sayı alanı: yatay sürükleme değeri değiştirir; tıklayıp bırakma düzenleme moduna geçer.
+// Değer her zaman decimals basamakla gösterilir ("-4.00"). Etiket alanın dışında çizilir (property_row_begin).
 // Enter ayrıştırıp uygular; ayrıştırılamazsa eski değer kalır. Değer değiştiyse true.
 // Odak başka alana geçerse bekleyen düzenleme aynı kare uygulanır (commit on blur).
-pub fn (mut c Context) number_field(label string, mut value &f32, unit string, step f32, min f32, max f32) bool {
+pub fn (mut c Context) number_field(label string, mut value &f32, unit string, decimals int, step f32, min f32, max f32) bool {
 	id := c.id(label)
 	mut editing := c.num_id == id
 	it := c.interact_kb(id, true, !editing)
@@ -442,7 +438,7 @@ pub fn (mut c Context) number_field(label string, mut value &f32, unit string, s
 		v = num_clamp(cur + it.drag_dx * step / drag_px_div * mult, min, max)
 	}
 	if it.clicked && !c.num_moved && !editing {
-		c.begin_num(id, cur)
+		c.begin_num(id, cur, decimals)
 	}
 	if editing {
 		if c.num_fresh && edit_hits(c.inp) {
@@ -473,10 +469,12 @@ pub fn (mut c Context) number_field(label string, mut value &f32, unit string, s
 	}
 	k := c.num_n % c.num_bufs.len
 	c.num_n++
-	n := format_f32(v, num_dec(v), mut c.num_bufs[k])
+	n := format_f32(v, decimals, mut c.num_bufs[k])
+	// Özellik satırında panelin kalanını doldurur; tek başınayken sabit genişlik.
+	w := if c.in_prop { grow() } else { fixed(num_field_w) }
 	c.open(label, Box{
 		dir:         .row
-		width:       fixed(num_field_w)
+		width:       w
 		height:      fixed(control_h)
 		padding:     pad_xy(space_2, 0)
 		gap:         space_2
@@ -487,13 +485,12 @@ pub fn (mut c Context) number_field(label string, mut value &f32, unit string, s
 		radius:      radius_control
 		clip:        true
 	})
-	c.text(label, .body, text_secondary)
-	c.spacer()
 	if c.num_id == id {
 		c.field_text(&c.num_buf, c.num_cur, .mono, text_primary, true)
 	} else {
 		c.text(unsafe { tos(&c.num_bufs[k][0], n) }, .mono, text_primary)
 	}
+	c.spacer()
 	if unit.len > 0 {
 		c.text(unit, .body, text_secondary)
 	}
@@ -510,6 +507,11 @@ fn fade(col Color, a f32) Color {
 // Açılır menü düğmesi: açık durumu kalıcı; açıksa true, çağıran menu_item'ları ve menu_end'i çağırır.
 // Dışarı basış ya da Esc kapatır; açılış opaklığı ve kayması motion_ms içinde.
 pub fn (mut c Context) menu_button(label string, text string) bool {
+	return c.menu_button_ex(label, text, fit(), none)
+}
+
+// Tetikleyici genişliği ve baştaki ikon verilebilir; menü genişliği max(tetikleyici, menu_min_w).
+pub fn (mut c Context) menu_button_ex(label string, text string, width Size, lead ?Icon) bool {
 	id := c.id(label)
 	it := c.interact(id, true)
 	c.push_id(1)
@@ -530,25 +532,31 @@ pub fn (mut c Context) menu_button(label string, text string) bool {
 	t := c.hover_t(mid, open)
 	c.menu_alpha = t
 	bt := c.hover_t(id, it.hovered)
+	bg, fg, edge, edge_w := button_style(.secondary, true, bt)
 	c.open(label, Box{
-		width:       fit()
+		dir:         .row
+		width:       width
 		height:      fixed(control_h)
 		padding:     pad_xy(space_3, 0)
-		align_main:  .center
+		gap:         space_2
 		align_cross: .center
-		bg:          mix(surface_2, surface_hover, bt)
-		border:      border_strong
-		border_w:    1
+		bg:          bg
+		border:      edge
+		border_w:    edge_w
 		radius:      radius_control
 	})
-	c.text(text, .body_strong, text_primary)
+	if i := lead {
+		c.icon(i, text_secondary)
+	}
+	c.text(text, .body_strong, fg)
 	c.close()
 	if open {
 		b := c.prev_rect(id) or { Rect{} }
+		menu_w := if b.w > menu_min_w { b.w } else { menu_min_w }
 		c.push_id(1)
 		c.overlay(label, b.x, b.y + b.h + space_1 - menu_slide * (1 - t), Box{
 			dir:      .column
-			width:    fit()
+			width:    fixed(menu_w)
 			height:   fit()
 			padding:  pad_all(space_1)
 			bg:       fade(surface_2, t)
@@ -595,7 +603,7 @@ pub fn (mut c Context) menu_end() {
 	c.close()
 }
 
-// İpucu: son açılan kutunun üzerinde tooltip_delay_ms durunca imlecin 16 px altında gösterilir.
+// İpucu: son açılan kutunun üzerinde tooltip_delay_ms durunca kutunun 8 px altında, sol kenarı hizalı gösterilir.
 pub fn (mut c Context) tooltip(text string) {
 	if c.last_id == 0 {
 		return
@@ -618,13 +626,16 @@ pub fn (mut c Context) tooltip(text string) {
 		return
 	}
 	c.tip_shown = true
-	c.overlay('tooltip', c.inp.mouse_x, c.inp.mouse_y + space_4, Box{
-		dir:     .column
-		width:   fit()
-		height:  fit()
-		padding: pad_xy(space_2, space_1)
-		bg:      surface_2
-		radius:  radius_control
+	r := c.prev_rect(c.last_id) or { Rect{} }
+	c.overlay('tooltip', r.x, r.y + r.h + space_2, Box{
+		dir:      .column
+		width:    fit()
+		height:   fit()
+		padding:  pad_xy(space_2, space_1)
+		bg:       surface_2
+		border:   border_strong
+		border_w: 1
+		radius:   radius_control
 	})
 	c.text(text, .caption, text_primary)
 	c.close()

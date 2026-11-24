@@ -320,9 +320,21 @@ fn (mut c Context) distribute_grow(first int, rem f32, a int) {
 }
 
 // Konumlar: padding, gap, hizalama ve kaydırma ofseti (kalıcı durumda, [0, içerik-kutu] aralığına kıskaçlı).
+// Kök dışı kökler (menü, ipucu) pencere içine kıskaçlanır; boyut düzenin fit_axis geçişinden bilinir.
+fn clamp_root(p f32, size f32, limit f32) f32 {
+	if p + size > limit {
+		return limit - size
+	}
+	return if p < 0 { 0 } else { p }
+}
+
 fn (mut c Context) place() {
 	for i in 0 .. c.n {
 		mut nd := &c.nodes[i]
+		if nd.is_root && i > 0 {
+			nd.pos[0] = clamp_root(nd.pos[0], nd.sz[0], c.vw)
+			nd.pos[1] = clamp_root(nd.pos[1], nd.sz[1], c.vh)
+		}
 		if nd.first < 0 {
 			continue
 		}

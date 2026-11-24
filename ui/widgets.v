@@ -10,28 +10,39 @@ pub fn (mut c Context) button(label string, kind ButtonKind) bool {
 	return c.button_ex(label, kind, true)
 }
 
-pub fn (mut c Context) button_ex(label string, kind ButtonKind, enabled bool) bool {
-	id := c.id(label)
-	it := c.interact(id, enabled)
-	t := c.hover_t(id, enabled && it.hovered)
-	mut bg := surface_2
-	mut fg := text_primary
+// Düğme renkleri, kenarlık rengi ve kalınlığı. Devre dışı öğe accent taşımaz (birincil: surface_2 + 1 px border).
+fn button_style(kind ButtonKind, enabled bool, t f32) (Color, Color, Color, f32) {
+	mut bg := mix(surface_2, surface_hover, t)
+	mut fg := if enabled { text_primary } else { text_muted }
+	mut edge := Color(0)
+	mut edge_w := f32(0)
 	match kind {
 		.primary {
-			bg = mix(accent, accent_hover, t)
-			fg = accent_text
+			if enabled {
+				bg = mix(accent, accent_hover, t)
+				fg = accent_text
+			} else {
+				bg = surface_2
+				edge = border
+				edge_w = 1
+			}
 		}
 		.secondary {
-			bg = mix(surface_2, surface_hover, t)
+			edge = border
+			edge_w = 1
 		}
 		.ghost {
 			bg = mix(surface_hover.with_alpha(0), surface_hover, t)
 		}
 	}
+	return bg, fg, edge, edge_w
+}
 
-	if !enabled {
-		fg = text_muted
-	}
+pub fn (mut c Context) button_ex(label string, kind ButtonKind, enabled bool) bool {
+	id := c.id(label)
+	it := c.interact(id, enabled)
+	t := c.hover_t(id, enabled && it.hovered)
+	bg, fg, edge, edge_w := button_style(kind, enabled, t)
 	c.open(label, Box{
 		width:       fit()
 		height:      fixed(control_h)
@@ -39,8 +50,8 @@ pub fn (mut c Context) button_ex(label string, kind ButtonKind, enabled bool) bo
 		align_main:  .center
 		align_cross: .center
 		bg:          bg
-		border:      if kind == .secondary { border } else { Color(0) }
-		border_w:    if kind == .secondary { f32(1) } else { f32(0) }
+		border:      edge
+		border_w:    edge_w
 		radius:      radius_control
 	})
 	c.text(label, .body_strong, fg)
@@ -124,7 +135,7 @@ pub fn (mut c Context) list_row_begin(label string, selected bool) Interaction {
 		dir:         .row
 		width:       grow()
 		height:      fixed(row_h)
-		padding:     pad_xy(space_2, 0)
+		padding:     pad_xy(space_3, 0)
 		gap:         space_2
 		align_cross: .center
 		bg:          bg
@@ -153,7 +164,6 @@ pub fn (mut c Context) section(label string, title string) bool {
 		dir:         .row
 		width:       grow()
 		height:      fixed(row_h)
-		padding:     pad_xy(space_2, 0)
 		gap:         space_1
 		align_cross: .center
 		bg:          mix(surface_hover.with_alpha(0), surface_hover, t)
@@ -174,7 +184,7 @@ pub fn (mut c Context) separator() {
 
 // Dikey tutamak: sürükleme size'ı yatay delta kadar değiştirir, [min, max] içinde kalır.
 // grows_right: sağa sürükleme size'ı artırır (sol panel); false ise sağ panel için ters yönlüdür.
-// size &f32: V'de mut skaler parametre yok.
+// size &f32: V'de mut skaler parametre yok. Tıklama alanı splitter_w; görünen çizgi 1 px.
 pub fn (mut c Context) splitter(label string, mut size &f32, min f32, max f32, grows_right bool) {
 	id := c.id(label)
 	it := c.interact(id, false)
@@ -197,10 +207,46 @@ pub fn (mut c Context) splitter(label string, mut size &f32, min f32, max f32, g
 	}
 	t := c.hover_t(id, active)
 	c.open(label, Box{
-		width:  fixed(splitter_w)
-		height: grow()
-		bg:     mix(border, border_strong, t)
+		width:      fixed(splitter_w)
+		height:     grow()
+		align_main: .center
 	})
+	c.leaf(.plain, Box{
+		width:  fixed(1)
+		height: grow()
+		bg:     mix(border, accent, t)
+	})
+	c.close()
+}
+
+// Özellik satırı: sabit genişlikte etiket sütunu, kalan genişliği dolduran alan (number_field).
+// Bir bölümdeki satırlar aynı etiket sütununu paylaşır; etiket dikeyde ortalı.
+pub fn (mut c Context) property_row_begin(label string) {
+	c.open('prop_row', Box{
+		dir:         .row
+		width:       grow()
+		height:      fit()
+		gap:         space_2
+		align_cross: .center
+	})
+	c.open('prop_label', Box{
+		width:  fixed(label_col_w)
+		height: fit()
+	})
+	c.text(label, .label, text_secondary)
+	c.close()
+	c.open('prop_field', Box{
+		dir:         .row
+		width:       grow()
+		height:      fit()
+		align_cross: .center
+	})
+	c.in_prop = true
+}
+
+pub fn (mut c Context) property_row_end() {
+	c.in_prop = false
+	c.close()
 	c.close()
 }
 
@@ -229,19 +275,27 @@ pub fn (mut c Context) toolbar_end() {
 }
 
 // Durum çubuğu kapsayıcısı; içerik statusbar_text ile yazılır.
+// Üstte 1 px kenarlık; metin dikeyde ortalı, sol kenar space_3.
 pub fn (mut c Context) statusbar_begin() {
 	c.open('statusbar', Box{
+		dir:    .column
+		width:  grow()
+		height: fixed(statusbar_h)
+		bg:     surface_1
+	})
+	c.separator()
+	c.open('statusbar_row', Box{
 		dir:         .row
 		width:       grow()
-		height:      fixed(statusbar_h)
-		padding:     pad_xy(space_2, 0)
+		height:      grow()
+		padding:     pad_xy(space_3, 0)
 		gap:         space_3
 		align_cross: .center
-		bg:          surface_1
 	})
 }
 
 pub fn (mut c Context) statusbar_end() {
+	c.close()
 	c.close()
 }
 

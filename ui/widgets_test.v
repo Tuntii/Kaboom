@@ -491,3 +491,90 @@ fn test_checked_checkbox_draws_check_glyph() {
 	l_off := c.end()
 	assert wgt_count_glyph_uv(l_off, check.u0, check.v0) == 0
 }
+
+fn wgt_count_cmds(l &DrawList, kind DrawKind, color u32) u32 {
+	mut n := u32(0)
+	for i in 0 .. l.len() {
+		cmd := l.at(i)
+		if cmd.kind == u32(kind) && cmd.color == color {
+			n++
+		}
+	}
+	return n
+}
+
+struct PropTally {
+mut:
+	a f32
+	b f32
+}
+
+// Özellik satırları: iki satırda alanlar aynı x'te; sağ kenar panelin iç sağ kenarında.
+fn test_property_row_label_column_aligned() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := PropTally{
+		a: 1
+		b: -4
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		c.open('pan', Box{
+			dir:     .column
+			width:   fixed(300)
+			height:  fit()
+			padding: pad_all(space_3)
+			gap:     space_2
+		})
+		c.property_row_begin('X')
+		c.number_field('x', mut &tp.a, 'm', 2, 0.1, -100, 100)
+		c.property_row_end()
+		c.property_row_begin('Y')
+		c.number_field('y', mut &tp.b, 'm', 2, 0.1, -100, 100)
+		c.property_row_end()
+		c.close()
+	}
+	wgt_frame(mut c, Input{}, body)
+	pan := c.last_rect('pan') or { panic('pan yok') }
+	fx := c.last_rect('x') or { panic('x yok') }
+	fy := c.last_rect('y') or { panic('y yok') }
+	assert fx.x == fy.x
+	assert fx.x + fx.w == pan.x + pan.w - space_3
+}
+
+// Devre dışı birincil düğme: surface_2 zemin, text_muted metin, accent yok.
+fn test_disabled_button_uses_muted() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	c.begin(Input{}, 400, 300, 1.0)
+	c.button_ex('Birincil', .primary, false)
+	l := c.end()
+	assert wgt_count_cmds(l, .rect, u32(surface_2)) >= 1
+	assert wgt_count_cmds(l, .glyph, u32(text_muted)) >= 1
+	assert wgt_count_cmds(l, .rect, u32(accent)) == 0
+	assert wgt_count_cmds(l, .glyph, u32(accent_text)) == 0
+}
+
+// Ayırıcının görünen çizgisi 1 mantıksal px; tıklama alanı ayrı ve görünmez.
+fn test_splitter_visible_line_is_1px() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := Tally{
+		size: 240
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		c.splitter('sp', mut &tp.size, 100, 400, true)
+	}
+	wgt_frame(mut c, Input{}, body)
+	c.begin(Input{}, 400, 300, 1.0)
+	body(mut c)
+	l := c.end()
+	assert wgt_count_cmds(l, .rect, u32(border)) == 1
+	for i in 0 .. l.len() {
+		cmd := l.at(i)
+		if cmd.kind == u32(DrawKind.rect) && cmd.color == u32(border) {
+			assert cmd.w == 1
+		}
+	}
+}

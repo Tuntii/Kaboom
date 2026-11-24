@@ -224,7 +224,7 @@ fn in_drag_value(atl &Atlas, min f32, max f32, shift bool) f32 {
 	mut t := InTally{}
 	mut tp := &t
 	body := fn [mut tp, min, max] (mut c Context) {
-		c.number_field('n', mut &tp.value, 'px', 1, min, max)
+		c.number_field('n', mut &tp.value, 'px', 0, 1, min, max)
 	}
 	in_drag(mut c, body, shift)
 	return t.value
@@ -243,7 +243,7 @@ fn in_typed(atl &Atlas, text string) (f32, int) {
 	mut t := InTally{}
 	mut tp := &t
 	body := fn [mut tp] (mut c Context) {
-		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+		if c.number_field('n', mut &tp.value, 'px', 0, 1, 0, 0) {
 			tp.changed++
 		}
 	}
@@ -377,7 +377,7 @@ fn test_input_widgets_zero_heap_allocs() {
 		if c.text_field('alan', mut tp.buf, 120) {
 			tp.enter++
 		}
-		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+		if c.number_field('n', mut &tp.value, 'px', 0, 1, 0, 0) {
 			tp.changed++
 		}
 		tp.open = c.menu_button('m', 'Menü')
@@ -441,7 +441,7 @@ fn test_number_commits_when_text_field_takes_focus() {
 	mut t := InTally{}
 	mut tp := &t
 	body := fn [mut tp] (mut c Context) {
-		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+		if c.number_field('n', mut &tp.value, 'px', 0, 1, 0, 0) {
 			tp.changed++
 		}
 		if c.text_field('alan', mut tp.buf, 120) {
@@ -465,7 +465,7 @@ fn test_number_first_keystroke_replaces_after_idle() {
 	}
 	mut tp := &t
 	body := fn [mut tp] (mut c Context) {
-		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+		if c.number_field('n', mut &tp.value, 'px', 0, 1, 0, 0) {
 			tp.changed++
 		}
 	}
@@ -510,7 +510,7 @@ fn test_tab_leaves_number_field_and_commits() {
 	mut t := InTally{}
 	mut tp := &t
 	body := fn [mut tp] (mut c Context) {
-		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+		if c.number_field('n', mut &tp.value, 'px', 0, 1, 0, 0) {
 			tp.changed++
 		}
 		if c.text_field('alan', mut tp.buf, 120) {
@@ -536,7 +536,7 @@ fn test_number_space_starts_enter_commits_once() {
 	mut t := InTally{}
 	mut tp := &t
 	body := fn [mut tp] (mut c Context) {
-		if c.number_field('n', mut &tp.value, 'px', 1, 0, 0) {
+		if c.number_field('n', mut &tp.value, 'px', 0, 1, 0, 0) {
 			tp.changed++
 		}
 	}
@@ -568,4 +568,74 @@ fn test_menu_closes_on_escape() {
 	assert t.open
 	wgt_frame(mut c, in_key(.escape), body)
 	assert !t.open
+}
+
+// Sayı alanı ayarlı ondalık sayısını her zaman gösterir: -4 → "-4.00".
+fn test_number_field_fixed_decimals() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{
+		value: -4
+	}
+	mut tp := &t
+	body := fn [mut tp] (mut c Context) {
+		c.number_field('n', mut &tp.value, 'm', 2, 0.1, -100, 100)
+	}
+	wgt_frame(mut c, Input{}, body)
+	mut s := ''
+	for b in c.num_bufs[0] {
+		if b == 0 {
+			break
+		}
+		s += b.ascii_str()
+	}
+	assert s == '-4.00'
+}
+
+// Menü genişliği tetikleyiciden ve menu_min_w'den dar değil; öğe menü iç genişliğini tam kaplar.
+fn test_menu_min_width() {
+	mut atl := wgt_atlas()
+	mut c := Context.new(&atl, 1024, 4096) or { panic(err) }
+	mut t := InTally{}
+	mut tp := &t
+	mut rw := MenuRects{}
+	mut rp := &rw
+	// Ölçüler bir önceki kareden okunur (prev_rect); menü açık kalan karelerde dolar.
+	body := fn [mut tp, mut rp] (mut c Context) {
+		tp.open = c.menu_button('m', 'Menü')
+		if tp.open {
+			c.menu_item('Birinci')
+			c.menu_end()
+		}
+		c.push_id(1)
+		mid := c.id('m')
+		c.pop_id()
+		c.push_id(2)
+		iid := c.id('Birinci')
+		c.pop_id()
+		if r := c.prev_rect(c.id('m')) {
+			rp.trig_w = r.w
+		}
+		if r := c.prev_rect(mid) {
+			rp.menu_w = r.w
+		}
+		if r := c.prev_rect(iid) {
+			rp.item_w = r.w
+		}
+	}
+	wgt_frame(mut c, timed(mouse_at(5, 5), 1000), body)
+	wgt_frame(mut c, timed(press_at(5, 5), 1000), body)
+	wgt_frame(mut c, timed(release_at(5, 5), 1000), body)
+	assert t.open
+	wgt_frame(mut c, timed(mouse_at(6, 6), 1200), body)
+	assert rw.menu_w >= rw.trig_w
+	assert rw.menu_w >= menu_min_w
+	assert rw.item_w == rw.menu_w - 2 * space_1
+}
+
+struct MenuRects {
+mut:
+	trig_w f32
+	menu_w f32
+	item_w f32
 }

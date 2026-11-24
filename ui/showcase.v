@@ -110,7 +110,7 @@ fn showcase_editor(mut c Context, mut st ShowcaseState) {
 		dir:         .row
 		width:       grow()
 		height:      fixed(toolbar_h)
-		padding:     pad_xy(space_2, 0)
+		padding:     pad_xy(space_3, 0)
 		gap:         space_1
 		align_cross: .center
 	})
@@ -148,22 +148,29 @@ fn showcase_editor(mut c Context, mut st ShowcaseState) {
 	})
 	c.text(hier_names[st.selected], .title, text_primary)
 	if c.section('sec_transform', 'Transform') {
-		c.number_field('x', mut &st.x, 'm', 0.1, -100, 100)
-		c.number_field('y', mut &st.y, 'm', 0.1, -100, 100)
+		prop_num(mut c, 'x', mut &st.x, 'm', 2, 0.1, -100, 100)
+		prop_num(mut c, 'y', mut &st.y, 'm', 2, 0.1, -100, 100)
 	}
 	if c.section('sec_sprite', 'Sprite') {
-		c.number_field('size', mut &st.size, 'm', 0.1, 0.1, 50)
-		c.number_field('r', mut &st.r, '', 0.01, 0, 1)
-		c.number_field('g', mut &st.g, '', 0.01, 0, 1)
-		c.number_field('b', mut &st.b, '', 0.01, 0, 1)
+		prop_num(mut c, 'size', mut &st.size, 'm', 2, 0.1, 0.1, 50)
+		prop_num(mut c, 'r', mut &st.r, '', 2, 0.01, 0, 1)
+		prop_num(mut c, 'g', mut &st.g, '', 2, 0.01, 0, 1)
+		prop_num(mut c, 'b', mut &st.b, '', 2, 0.01, 0, 1)
 		c.checkbox('visible', mut &st.visible)
 	}
-	if c.menu_button('add_component', 'Bileşen ekle') {
+	// Bölümden space_4 ayrık: kutu aralığı space_2 + üst dolgu space_2.
+	c.open('add_row', Box{
+		width:   grow()
+		height:  fit()
+		padding: pad_xy(0, space_2)
+	})
+	if c.menu_button_ex('add_component', 'Bileşen ekle', grow(), Icon.plus) {
 		c.menu_item('Collider')
 		c.menu_item('Body')
 		c.menu_item('Etiket')
 		c.menu_end()
 	}
+	c.close()
 	fill_v(mut c)
 	c.close()
 	c.close()
@@ -171,6 +178,13 @@ fn showcase_editor(mut c Context, mut st ShowcaseState) {
 	c.statusbar_begin()
 	c.statusbar_text('tick 1204 · 12 varlık · duraklatıldı · 120 fps')
 	c.statusbar_end()
+}
+
+// Özellik satırı: etiket sütunu ve ayarlı ondalıklı sayı alanı.
+fn prop_num(mut c Context, label string, mut value &f32, unit string, decimals int, step f32, min f32, max f32) {
+	c.property_row_begin(label)
+	c.number_field(label, mut value, unit, decimals, step, min, max)
+	c.property_row_end()
 }
 
 // Kalan dikey alanı doldurur: sonraki öğeleri alt kenara iter.
@@ -285,7 +299,7 @@ fn showcase_col2(mut c Context, mut st ShowcaseState) {
 	c.list_row('w_row_s', 'Seçili satır', true)
 	c.separator()
 	c.text('Sayı alanı', .title, text_primary)
-	c.number_field('Değer', mut &st.num_demo, '', 0.1, 0, 10)
+	c.number_field('w_num', mut &st.num_demo, '', 1, 0.1, 0, 10)
 	c.text('Açılır menü', .title, text_primary)
 	if c.menu_button('w_menu', 'Menü') {
 		c.menu_item('Birinci')
