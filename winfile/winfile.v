@@ -13,6 +13,9 @@ fn C._commit(fd int) int
 fn C.MoveFileExW(existing &u16, new &u16, flags u32) bool
 fn C.DeleteFileW(name &u16) bool
 fn C.fread(ptr voidptr, size usize, n usize, stream voidptr) usize
+// Windows'ta long 32 bit: ftell 2 GiB üstünde negatif döner, bu da reddedilen boyut olur.
+fn C.fseek(stream voidptr, offset int, origin int) int
+fn C.ftell(stream voidptr) int
 fn C.ferror(stream voidptr) int
 
 // Kapasite bir NUL için ayrılır: en uzun yol 1023 UTF-16 birimi.
@@ -56,8 +59,16 @@ pub fn write_file(path string, data []u8) ! {
 	}
 }
 
-// Dosyayı baştan sona okur; UTF-8 yol geniş API ile açılır (Türkçe yollar). Açılamazsa ya da okuma yarım kalırsa hata.
+// Okunabilecek en büyük dosya: scene ve kayıt dosyaları bu sınırın çok altındadır; daha büyüğü bellek tüketimi olur.
+const max_read_bytes = i64(256 * 1024 * 1024)
+
+// Dosyayı baştan sona okur; UTF-8 yol geniş API ile açılır (Türkçe yollar). Açılamazsa, sınırı aşarsa ya da okuma yarım kalırsa hata.
 pub fn read_file(path string) ![]u8 {
+	return read_file_capped(path, max_read_bytes)
+}
+
+// Boyut önce sorulur, tampon ondan sonra ayrılır: sınır aşılırsa bellek hiç ayrılmaz.
+fn read_file_capped(path string, cap i64) ![]u8 {
 	mut wpath := [1024]u16{}
 	wide_path(path, mut wpath)!
 	mut wmode := [3]u16{}
@@ -70,20 +81,26 @@ pub fn read_file(path string) ![]u8 {
 	defer {
 		C.fclose(f)
 	}
-	mut data := []u8{}
-	mut chunk := []u8{len: 4096}
-	defer {
-		unsafe { chunk.free() }
-	}
-	for {
-		n := unsafe { C.fread(&chunk[0], 1, 4096, f) }
-		if n == 0 {
-			break
-		}
-		data << chunk[..int(n)]
-	}
-	if C.ferror(f) != 0 {
+	if C.fseek(f, 0, 2) != 0 {
 		return error('dosya okunamadı')
+	}
+	size := i64(C.ftell(f))
+	if size < 0 {
+		return error('dosya okunamadı')
+	}
+	if size > cap {
+		return error('dosya çok büyük: ${size} bayt, en çok ${cap} bayt okunur')
+	}
+	if C.fseek(f, 0, 0) != 0 {
+		return error('dosya okunamadı')
+	}
+	mut data := []u8{len: int(size)}
+	if size > 0 {
+		n := unsafe { C.fread(&data[0], 1, usize(size), f) }
+		if n != usize(size) || C.ferror(f) != 0 {
+			unsafe { data.free() }
+			return error('dosya okunamadı')
+		}
 	}
 	return data
 }

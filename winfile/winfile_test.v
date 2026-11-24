@@ -64,3 +64,21 @@ fn test_read_file_missing_fails() {
 	read_file(os.join_path(dir, 'yok.vscene')) or { return }
 	assert false, 'missing file must fail'
 }
+
+// Sınır aşılınca dosya ayrılmadan reddedilir: 256 MiB'lik gerçek dosya yerine küçük bir sınır enjekte edilir.
+fn test_read_file_refuses_over_cap_before_reading() {
+	dir := os.join_path(os.temp_dir(), 'vcore_winfile_cap_test')
+	os.rmdir_all(dir) or {}
+	os.mkdir_all(dir) or { panic(err) }
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	path := os.join_path(dir, 'sinir.bin')
+	write_file(path, 'ABCDEFGHIJKLMNOP'.bytes()) or { panic(err) }
+	mut refused := false
+	read_file_capped(path, 8) or { refused = true }
+	assert refused
+	// Sınır tam dosya boyutuna eşitse okunur.
+	got := read_file_capped(path, 16) or { panic(err) }
+	assert got.len == 16
+}
