@@ -695,6 +695,9 @@ fn test_cancel_same_field_restores_editor_start_value() {
 	s.history_cancel_group() or { panic(err) }
 	assert tr_x(mut s, e) == 0
 	assert s.engine.history.undo_len() == 2
+	// Sıra sonucu: ajan adımı editörün ara değerine (3) döner, başlangıca (0) değil.
+	assert hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert tr_x(mut s, e) == 3
 }
 
 // Ajan grubu editör grubu kapanana kadar yığında; editör grubu üstte: önce editör, sonra ajan geri alınır.
@@ -742,8 +745,11 @@ fn test_cancel_record_has_only_editor_commands() {
 		}
 	}
 	assert last_agent >= 0
-	assert rec.entries.len - last_agent - 1 >= 1
-	for i in last_agent + 1 .. rec.entries.len {
-		assert rec.entries[i].cmd.source == .editor
-	}
+	// İptal yalnız editörün x yazımını geri alır: ajan sonrası tam bir kayıt, x'in başlangıcı (0).
+	assert rec.entries.len - last_agent - 1 == 1
+	rev := rec.entries[last_agent + 1].cmd
+	assert rev.source == .editor
+	assert rev.kind == .set_field
+	assert rev.field == 0
+	assert rev.value == 0
 }

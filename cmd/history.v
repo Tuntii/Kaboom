@@ -580,7 +580,7 @@ pub fn (mut h History) commit_capture(r ApplyResult) {
 		h.block_ent = h.head_ent
 		h.block_comp = h.head_comp
 	}
-	auto := h.depth == 0 && !h.iso
+	auto := h.depth == 0
 	if auto {
 		h.begin_group()
 	}

@@ -163,7 +163,7 @@ pub fn (mut s Server) handle_from(line string, source cmd.Source) ?string {
 	}
 	// Her istek bir geçmiş grubudur. Açık editör grubu varken ajan isteği (editör dışı kaynak) kendi grubunu
 	// kurar (D1): editör grubunun geri alınmasına girmez; editör istekleri editör grubunun içinde kalır.
-	s.engine.history.begin_request(source != .editor)
+	s.engine.history.begin_request(source != .editor && s.editor_depth > 0)
 	defer {
 		s.engine.history.end_request()
 	}
