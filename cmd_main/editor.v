@@ -94,7 +94,15 @@ fn parse_editor_opts(args []string) EditorOpts {
 		}
 		i += 2
 	}
+	if editor_opts_invalid(o) {
+		usage()
+	}
 	return o
+}
+
+// Bayrak birleşimi geçersiz mi: --screenshot-after-eof, ekran görüntüsü yolu olmadan sessiz no-op olurdu.
+fn editor_opts_invalid(o EditorOpts) bool {
+	return o.screenshot_after_eof && o.screenshot == ''
 }
 
 fn run_editor(args []string) {

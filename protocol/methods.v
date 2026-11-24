@@ -493,6 +493,7 @@ fn (mut s Server) sim_reset() !Val {
 	// Yeni motorun geçmişi boş ve derinliği 0: açık editör grubu da artık yok.
 	s.editor_depth = 0
 	s.changes++
+	s.world_gen++
 	return empty_object()
 }
 
@@ -610,6 +611,9 @@ fn (s &Server) scene_save(p Val) !Val {
 // Sonuç dizisi dünya sıfırlanmadan önce kurulur: sıfırlamadan sonra yetmezlik olmaz.
 fn (mut s Server) scene_load(p Val) !Val {
 	path := string_param(p, 'path')!
+	if path.len > last_path_cap {
+		return invalid_params('scene path is longer than ${last_path_cap} bytes')
+	}
 	text := load_scene_text(path) or {
 		return io_error(path, 'could not read file; check that the path exists and is readable, then retry scene.load')
 	}
@@ -665,6 +669,11 @@ fn (mut s Server) scene_load(p Val) !Val {
 	// Kurulum komutları geçmişe yazılmış olabilir: yüklenen sahne tek geri alma adımı değildir.
 	s.engine.history.clear()
 	s.loads++
+	// Ajan yüklemesi de editörde yol olarak benimsenir (last_load_path).
+	s.last_path_len = path.len
+	for i in 0 .. path.len {
+		s.last_path[i] = path[i]
+	}
 	res := obj()
 	res.set('entities', out)
 	return res

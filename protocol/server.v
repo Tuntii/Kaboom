@@ -71,7 +71,15 @@ mut:
 	changes u64
 	// Başarılı scene.load sayacı: editör bunu izleyip yüklemeden sonra kadrajlar (ajan yüklemeleri dahil).
 	loads u64
+	// Dünya kuruluş sayacı: her sim_reset'te (scene.load dahil) artar. Kimlik anahtarlı durumu olan istemci bunu izler.
+	world_gen u64
+	// Son başarılı scene.load yolu (editör ajan yüklemesini benimser). Sabit tampon: yükleme yolu en fazla last_path_cap bayt.
+	last_path     [last_path_cap]u8
+	last_path_len int
 }
+
+// Yol tamponu (MAX_PATH'in üzerinde): daha uzun scene.load yolu reddedilir, böylece son yol hiç kırpılmaz.
+const last_path_cap = 1024
 
 // Bölgeyi cfg.bytes_needed kadar rezerve eder, istek arenasını ayırır ve Sim'i kurar.
 pub fn Server.new(cfg sim.Config) !Server {
@@ -150,6 +158,16 @@ pub fn (s &Server) change_count() u64 {
 // Başarılı scene.load sayısı (editör yüklemeyi kare başında algılar).
 pub fn (s &Server) load_count() u64 {
 	return s.loads
+}
+
+// Dünya kuruluş sayısı: değiştiyse önceki dünyadaki kimlikler (ve geçmiş grupları) geçersizdir.
+pub fn (s &Server) world_generation() u64 {
+	return s.world_gen
+}
+
+// Son başarılı scene.load yolu; hiç yüklenmediyse boş. Dönen metin sunucu belleğine bakar: hemen kopyalanmalı.
+pub fn (s &Server) last_load_path() string {
+	return unsafe { tos(&s.last_path[0], s.last_path_len) }
 }
 
 // Geri al ve yineleme yığınlarının grup sayıları (buton etkinliği için).

@@ -1041,3 +1041,30 @@ fn test_response_helpers() {
 	assert response_error_message(err_line).contains('could not read file')
 	assert response_entity(err_line) == none
 }
+
+// Dünya kuruluş sayısı sim.reset ve scene.load'da artar; yüklenen yol son yol olarak tutulur. Uzun yol reddedilir.
+fn test_world_generation_and_last_load_path() {
+	dir := os.temp_dir().replace('\\', '/')
+	path := '${dir}/vcore_m4c_fix_gen_${os.getpid()}.vscene'
+	defer {
+		os.rm(path) or {}
+	}
+	mut s := new_server()
+	defer {
+		s.close()
+	}
+	call(mut s, '{"jsonrpc":"2.0","id":1,"method":"entity.spawn"}')
+	call(mut s, '{"jsonrpc":"2.0","id":2,"method":"scene.save","params":{"path":"${path}"}}')
+	assert s.last_load_path().len == 0, 'başta yol yok'
+	g0 := s.world_generation()
+	call(mut s, '{"jsonrpc":"2.0","id":3,"method":"sim.reset"}')
+	g1 := s.world_generation()
+	assert g1 > g0, 'sim.reset kuruluşu artırmalı'
+	call(mut s, '{"jsonrpc":"2.0","id":4,"method":"scene.load","params":{"path":"${path}"}}')
+	assert s.world_generation() > g1, 'scene.load kuruluşu artırmalı'
+	assert s.last_load_path() == path, 'son yol: ${s.last_load_path()}'
+	long := 'x'.repeat(last_path_cap + 1)
+	resp := s.handle('{"jsonrpc":"2.0","id":5,"method":"scene.load","params":{"path":"${long}"}}') or { panic('yanit yok') }
+	assert resp.contains('"error"'), 'uzun yol reddedilmeli: ${resp}'
+	assert s.last_load_path() == path, 'reddedilen yol son yolu değiştirmemeli'
+}

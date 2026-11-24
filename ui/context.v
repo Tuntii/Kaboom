@@ -676,9 +676,26 @@ pub fn (mut c Context) focus_label(label string) {
 	c.focus = c.id(label)
 }
 
-// Kısayol: k bu karede basıldı ve klavye bir alanda değil. Çağıran kısayolu alanları çizdikten sonra sorgulamalı.
+// Açık menü (önceki karenin durumu) klavyeyi sahiplenir: menü açıkken kısayollar çalışmaz.
+pub fn (c &Context) menu_open() bool {
+	return c.kb_menu
+}
+
+// Düzenleme ve sürükleme durumunu bırakır; değer yazılmaz. Çağıran, widget'ların eski kimliklerini yeni dünyaya
+// taşımamak için dünya değiştiğinde çağırır (sayı alanı sürüklemesi ve düzenlemesi, metin alanı, odak).
+pub fn (mut c Context) abandon_edit() {
+	c.active = 0
+	c.drag_on = false
+	c.num_id = 0
+	c.txt_id = 0
+	c.focus = 0
+	c.focus_visible = false
+}
+
+// Kısayol: k bu karede basıldı, klavye bir alanda değil ve açık menü klavyeyi sahiplenmiyor.
+// Çağıran kısayolu alanları çizdikten sonra sorgulamalı.
 pub fn (c &Context) shortcut(k Key) bool {
-	return !c.keyboard_captured() && c.key_pressed(k)
+	return !c.keyboard_captured() && !c.kb_menu && c.key_pressed(k)
 }
 
 // Önceki karenin dikdörtgeni imleci içeriyor mu.
