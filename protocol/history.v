@@ -64,6 +64,10 @@ pub fn (mut s Server) history_end_group() {
 // Hazırlama alanı kapasiteyi aştıysa hiçbir şey uygulanmaz, grup açık kalır ve hata döner: çağıran
 // history_end_group ile normal kapatabilir (taşan grup düşürülür).
 pub fn (mut s Server) history_cancel_group() ! {
+	// Editör grubu açık değilse iptal bir şey yapmaz: istek düzeyindeki hazırlama alanına dokunulmaz.
+	if s.editor_depth == 0 {
+		return error('no editor group open')
+	}
 	if s.engine.history.stage_overflowed() {
 		return error('history: open group overflowed the staging area; nothing was undone, end the group normally')
 	}

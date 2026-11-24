@@ -403,6 +403,30 @@ fn test_undo_refused_while_editor_group_open() {
 	assert tr_x(mut s, e) == 1
 }
 
+// Editör grubu yokken iptal, istek düzeyindeki açık gruba dokunmaz: hata döner, grup olduğu gibi kalır.
+fn test_cancel_without_editor_group_is_refused() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	e := spawn_at(mut s, 1)
+	before := s.engine.history.undo_len()
+	s.engine.history.begin_group()
+	s.commit_one(cmd.Command{
+		kind:   .despawn
+		source: .agent
+		entity: e
+	}) or { panic(err) }
+	mut refused := false
+	s.history_cancel_group() or { refused = err.msg() == 'no editor group open' }
+	assert refused
+	// Yıkım yerinde kalır: iptal geri almamalı; grup da açık kalmalı.
+	assert !s.engine.world.is_alive(e)
+	assert s.engine.history.undo_len() == before
+	s.engine.history.end_group()
+	assert s.engine.history.undo_len() == before + 1
+}
+
 // Hazırlama alanı taşmış grupta iptal hiçbir şey uygulamaz, hata döner ve grup açık kalır.
 fn test_cancel_refuses_overflowed_group() {
 	mut s := Server.new(sim.Config{
