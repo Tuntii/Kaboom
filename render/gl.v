@@ -63,6 +63,11 @@ pub const gl_src_alpha = u32(0x0302)
 pub const gl_one_minus_src_alpha = u32(0x0303)
 pub const gl_one = u32(1)
 pub const gl_scissor_test = u32(0x0C11)
+pub const gl_framebuffer = u32(0x8D40)
+pub const gl_renderbuffer = u32(0x8D41)
+pub const gl_color_attachment0 = u32(0x8CE0)
+pub const gl_framebuffer_complete = u32(0x8CD5)
+pub const gl_rgba8 = u32(0x8058)
 
 // Yuva indeksleri; load_gl her birini kendi adıyla doldurur.
 const slot_create_shader = 0
@@ -96,6 +101,15 @@ const slot_active_texture = 27
 const slot_uniform1i = 28
 const slot_uniform2f = 29
 const slot_vertex_attrib_i_pointer = 30
+const slot_gen_framebuffers = 31
+const slot_bind_framebuffer = 32
+const slot_framebuffer_renderbuffer = 33
+const slot_check_framebuffer_status = 34
+const slot_delete_framebuffers = 35
+const slot_gen_renderbuffers = 36
+const slot_bind_renderbuffer = 37
+const slot_renderbuffer_storage = 38
+const slot_delete_renderbuffers = 39
 
 // Fonksiyon işaretçi tipleri. Parametreler GL'nin C imzasıyla birebir: GLsizei ve GLint = int, GLuint ve GLenum = u32.
 type FnCreateShader = fn (u32) u32
@@ -129,6 +143,15 @@ type FnActiveTexture = fn (u32)
 type FnUniform1i = fn (int, int)
 type FnUniform2f = fn (int, f32, f32)
 type FnVertexAttribIPointer = fn (u32, int, u32, int, voidptr)
+type FnGenFramebuffers = fn (int, voidptr)
+type FnBindFramebuffer = fn (u32, u32)
+type FnFramebufferRenderbuffer = fn (u32, u32, u32, u32)
+type FnCheckFramebufferStatus = fn (u32) u32
+type FnDeleteFramebuffers = fn (int, voidptr)
+type FnGenRenderbuffers = fn (int, voidptr)
+type FnBindRenderbuffer = fn (u32, u32)
+type FnRenderbufferStorage = fn (u32, u32, int, int)
+type FnDeleteRenderbuffers = fn (int, voidptr)
 
 // Yuva sırası slot_* sabitleriyle aynıdır: gl_fn_names[slot_x] == 'glX'.
 const gl_fn_names = ['glCreateShader', 'glShaderSource', 'glCompileShader', 'glGetShaderiv',
@@ -138,7 +161,9 @@ const gl_fn_names = ['glCreateShader', 'glShaderSource', 'glCompileShader', 'glG
 	'glDeleteVertexArrays', 'glGenBuffers', 'glBindBuffer', 'glBufferData', 'glBufferSubData',
 	'glDeleteBuffers', 'glEnableVertexAttribArray', 'glVertexAttribPointer',
 	'glVertexAttribDivisor', 'glDrawArraysInstanced', 'glActiveTexture', 'glUniform1i', 'glUniform2f',
-	'glVertexAttribIPointer']
+	'glVertexAttribIPointer', 'glGenFramebuffers', 'glBindFramebuffer', 'glFramebufferRenderbuffer',
+	'glCheckFramebufferStatus', 'glDeleteFramebuffers', 'glGenRenderbuffers', 'glBindRenderbuffer',
+	'glRenderbufferStorage', 'glDeleteRenderbuffers']
 
 // names[i] işaretçisini yuva i'ye yükler. Eksik olanların TAMAMINI tek hatada virgüllü listeler;
 // hata durumunda tüm yuvalar ve hazır bayrağı sıfırlanır (kısmi durum kalmaz).
@@ -338,6 +363,59 @@ pub fn uniform2f(location int, x f32, y f32) {
 pub fn vertex_attrib_i_pointer(index u32, size int, typ u32, stride int, pointer voidptr) {
 	f := unsafe { FnVertexAttribIPointer(C.vcore_gl_get(slot_vertex_attrib_i_pointer)) }
 	f(index, size, typ, stride, pointer)
+}
+
+// GL 3.0 çerçeve tamponu (FBO) sarmalayıcıları: tek kimlik üreten/silen yardımcılar dahil.
+
+pub fn gen_framebuffer() u32 {
+	mut id := u32(0)
+	f := unsafe { FnGenFramebuffers(C.vcore_gl_get(slot_gen_framebuffers)) }
+	f(1, voidptr(&id))
+	return id
+}
+
+pub fn bind_framebuffer(target u32, framebuffer u32) {
+	f := unsafe { FnBindFramebuffer(C.vcore_gl_get(slot_bind_framebuffer)) }
+	f(target, framebuffer)
+}
+
+pub fn framebuffer_renderbuffer(target u32, attachment u32, renderbuffertarget u32, renderbuffer u32) {
+	f := unsafe { FnFramebufferRenderbuffer(C.vcore_gl_get(slot_framebuffer_renderbuffer)) }
+	f(target, attachment, renderbuffertarget, renderbuffer)
+}
+
+pub fn check_framebuffer_status(target u32) u32 {
+	f := unsafe { FnCheckFramebufferStatus(C.vcore_gl_get(slot_check_framebuffer_status)) }
+	return f(target)
+}
+
+pub fn delete_framebuffer(framebuffer u32) {
+	mut id := framebuffer
+	f := unsafe { FnDeleteFramebuffers(C.vcore_gl_get(slot_delete_framebuffers)) }
+	f(1, voidptr(&id))
+}
+
+pub fn gen_renderbuffer() u32 {
+	mut id := u32(0)
+	f := unsafe { FnGenRenderbuffers(C.vcore_gl_get(slot_gen_renderbuffers)) }
+	f(1, voidptr(&id))
+	return id
+}
+
+pub fn bind_renderbuffer(target u32, renderbuffer u32) {
+	f := unsafe { FnBindRenderbuffer(C.vcore_gl_get(slot_bind_renderbuffer)) }
+	f(target, renderbuffer)
+}
+
+pub fn renderbuffer_storage(target u32, internalformat u32, width int, height int) {
+	f := unsafe { FnRenderbufferStorage(C.vcore_gl_get(slot_renderbuffer_storage)) }
+	f(target, internalformat, width, height)
+}
+
+pub fn delete_renderbuffer(renderbuffer u32) {
+	mut id := renderbuffer
+	f := unsafe { FnDeleteRenderbuffers(C.vcore_gl_get(slot_delete_renderbuffers)) }
+	f(1, voidptr(&id))
 }
 
 // GL 1.1 sarmalayıcıları: doğrudan opengl32 çağrıları.

@@ -31,6 +31,7 @@ mut:
 	srv   &protocol.Server
 	qf    render.QuadFields
 	alpha f32
+	fbo   render.Fbo // ekran görüntüsü için; ilk yakalamada tembel kurulur
 }
 
 fn parse_run_opts(args []string) RunOpts {
@@ -94,13 +95,18 @@ fn capture_frame(path string) !(int, int) {
 	mut out := c.rend.payload()
 	// Ekran görüntüsü mevcut tick'i gösterir: alfa 1.0 (entity.get ile aynı konum).
 	n, _ := render.prepare(c.srv.world(), c.qf, 1.0, mut out)
+	// Arka tampon yerine FBO'ya çizilir: ekranda görünen kare bu yakalamadan etkilenmez.
+	c.fbo.resize(w, h)!
+	c.fbo.bind()
 	c.rend.draw(render.Camera{}, w, h, n)
 	render.finish()
 	mut px := []u8{len: w * h * 4}
 	defer {
 		unsafe { px.free() }
 	}
+	// FBO okuması arka tamponla aynı satır sırasını (alt-sol köken) verir; çevirme write_png'deki flip_y ile yapılır.
 	render.read_pixels(0, 0, w, h, render.gl_rgba, render.gl_unsigned_byte, px.data)
+	render.unbind_fbo()
 	image.write_png(path, w, h, px, true)!
 	return w, h
 }
@@ -149,6 +155,9 @@ fn run_window(args []string) {
 		alpha: 1.0
 	}
 	C.vcore_run_set(voidptr(&ctx))
+	defer {
+		ctx.fbo.close()
+	}
 	srv.set_capture(capture_frame)
 	if o.paused {
 		// Bildirim (id yok) yanıt üretmez; duraklatma protokolün kendi yolundan geçer.
