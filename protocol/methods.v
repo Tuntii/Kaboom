@@ -197,6 +197,11 @@ fn (s &Server) check_queue_slots(plans []Plan) ! {
 // Planları bir varlığa dönüştürür: önce spawn (id'yi alır), sonra her bileşen bir add, her alan bir set.
 // Çağıran kuyruk sığmasını check_queue_slots ile önceden denetler.
 fn (mut s Server) spawn_planned(plans []Plan) !ecs.EntityID {
+	// Spawn ve bileşen yazımları tek geçmiş bloğu: tersi yalnız despawn olur, geri alma bloğu tek parça kalır.
+	s.engine.history.begin_block()
+	defer {
+		s.engine.history.end_block()
+	}
 	// Tek komut: dizi literali (heap) ayrılmadan commit_one.
 	s.commit_one(cmd.Command{
 		kind:   .spawn

@@ -392,3 +392,73 @@ fn test_staged_group_readable_and_abandon() {
 	assert h.undo_len() == 0
 	assert h.staged().block_count() == 0
 }
+
+// Geri yükleme bloğu (spawn + add + set) tek blok olarak yürütülünce yakalanan ters yalnız despawn'dır.
+fn test_restore_block_inverse_is_single_despawn() {
+	region, mut w, mut h := hist_env(32, 8)
+	defer {
+		memory.release(region)
+	}
+	e := w.spawn() or { panic('spawn') }
+	assert w.add_component(e, ecs.transform_id) == .ok
+	assert w.add_component(e, ecs.sprite_id) == .ok
+	assert w.set_field(e, ecs.transform_id, 0, hist_bits(3.5)) == .ok
+	assert w.set_field(e, ecs.sprite_id, 0, hist_bits(2.0)) == .ok
+	r := hist_step(mut h, mut w, Command{
+		kind:   .despawn
+		source: .agent
+		entity: e
+	})
+	assert r.status == .ok
+	// Halka görünümü yazımdan önce kopyalanır: geri yükleme bloğu kopyada yürütülür.
+	g := h.pop_undo() or { panic('pop') }
+	mut restore := []Command{}
+	for c in g.block(0) {
+		restore << c
+	}
+	assert restore[0].kind == .spawn
+	h.set_mode(.undoing)
+	h.begin_group()
+	h.begin_block()
+	first := hist_step(mut h, mut w, restore[0])
+	assert first.status == .ok
+	for i in 1 .. restore.len {
+		mut c := restore[i]
+		if c.entity == restore[0].entity {
+			c.entity = first.entity
+		}
+		_ = hist_step(mut h, mut w, c)
+	}
+	h.end_block()
+	h.end_group()
+	h.set_mode(.normal)
+	redo := h.pop_redo() or { panic('redo pop') }
+	assert redo.block_count() == 1
+	b := redo.block(0)
+	assert b.len == 1
+	assert b[0].kind == .despawn
+	assert b[0].entity == first.entity
+}
+
+// Bloktaki her komutun tersi tek bloğa girer, uygulama sırası ters: iki set tek blok, değerler 5 sonra 1.
+fn test_block_inverse_is_single_block() {
+	region, mut w, mut h := hist_env(16, 8)
+	defer {
+		memory.release(region)
+	}
+	e := w.spawn() or { panic('spawn') }
+	assert w.add_component(e, ecs.transform_id) == .ok
+	assert w.set_field(e, ecs.transform_id, 0, hist_bits(1)) == .ok
+	h.begin_group()
+	h.begin_block()
+	_ = hist_step(mut h, mut w, set_cmd(e, 0, 5))
+	_ = hist_step(mut h, mut w, set_cmd(e, 0, 7))
+	h.end_block()
+	h.end_group()
+	g := h.pop_undo() or { panic('pop') }
+	assert g.block_count() == 1
+	b := g.block(0)
+	assert b.len == 2
+	assert b[0].value == hist_bits(5)
+	assert b[1].value == hist_bits(1)
+}

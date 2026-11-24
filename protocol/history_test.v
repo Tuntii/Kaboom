@@ -553,3 +553,23 @@ fn test_unbalanced_end_group_keeps_request_group_open() {
 	s.engine.history.end_group()
 	assert s.engine.history.undo_len() == 2
 }
+
+// Transform+Body spawn'ı art arda geri alıp yinelemek her turda aynı adım boyutunda kalmalı: ters blok
+// bir despawn olunca geri yükleme bloğunun komutları ayrıca büyümez.
+fn test_undo_redo_cycles_keep_step_size() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	_ = hcall(mut s, rq(1, '"method":"entity.spawn","params":{"components":{"Transform":{"x":1.5},"Body":{"vx":2}}}'))
+	start := content_snapshot(&s)
+	first_undo := hpick(history_op(mut s, 'history.undo'), 'commands').f64()
+	first_redo := hpick(history_op(mut s, 'history.redo'), 'commands').f64()
+	for turn in 0 .. 20 {
+		u := hpick(history_op(mut s, 'history.undo'), 'commands').f64()
+		assert u == first_undo, 'tur ${turn}: undo adimi ${u}, ilk ${first_undo}'
+		r := hpick(history_op(mut s, 'history.redo'), 'commands').f64()
+		assert r == first_redo, 'tur ${turn}: redo adimi ${r}, ilk ${first_redo}'
+	}
+	assert content_snapshot(&s) == start
+}

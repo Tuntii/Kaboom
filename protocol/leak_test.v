@@ -97,3 +97,31 @@ fn test_history_and_scene_do_not_grow_live_heap() {
 	growth_load := memory.heap_live_count() - before_load
 	assert growth_load <= 16, 'scene.load canli tahsis artisi: ${growth_load}'
 }
+
+// Transform+Body spawn'ının geri al/yinele döngüsü: her adım bir blok dizisi kopyalar, bu dizilerin sızmaması gerekir.
+fn test_spawn_undo_redo_cycles_do_not_grow_live_heap() {
+	if !memory.heap_tracking_enabled() {
+		eprintln('atlandi: -d track_heap yok; sızıntı testi koşmadı')
+		return
+	}
+	mut s := Server.new(sim.Config{ capacity: 64, queue_capacity: 64, record_capacity: 1024 }) or {
+		panic(err)
+	}
+	defer {
+		s.close()
+	}
+	_ = s.handle('{"jsonrpc":"2.0","id":1,"method":"entity.spawn","params":{"components":{"Transform":{"x":1.5},"Body":{"vx":2}}}}') or { panic('yanit yok') }
+	undo_line := '{"jsonrpc":"2.0","id":3,"method":"history.undo"}'
+	redo_line := '{"jsonrpc":"2.0","id":4,"method":"history.redo"}'
+	for _ in 0 .. 10 {
+		_ = s.handle(undo_line) or { panic('yanit yok') }
+		_ = s.handle(redo_line) or { panic('yanit yok') }
+	}
+	before := memory.heap_live_count()
+	for _ in 0 .. 1000 {
+		_ = s.handle(undo_line) or { panic('yanit yok') }
+		_ = s.handle(redo_line) or { panic('yanit yok') }
+	}
+	growth := memory.heap_live_count() - before
+	assert growth <= 16, 'spawn geri al/yinele canli tahsis artisi: ${growth}'
+}

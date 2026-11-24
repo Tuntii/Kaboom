@@ -203,6 +203,11 @@ mut:
 	stage_b     u32
 	stage_over  bool
 	stage_t     int // açık grubun hedef yığını (0 undo, 1 redo); -1 açık grup yok
+	// Yürütücünün ters bloğu: blok spawn ile başlıyorsa yalnız bu spawn'ın ters işlemi (despawn) yakalanır.
+	in_block   bool
+	block_head bool
+	block_skip bool
+	stage_base u32 // açık bloğun ters komutlarının stage_cmds'deki başlangıcı
 }
 
 // Bir bloğun en büyük boyu: spawn/despawn ters bloğu, her bileşen için add ve her alan için set.
@@ -332,6 +337,12 @@ fn (mut h History) put_fields(w &ecs.World, e ecs.EntityID, comp u16, source Sou
 // uygulanamayacak komutlar (yok varlık/bileşen, okunamayan alan) hazırlanmaz.
 pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 	h.prepared = false
+	// Blok spawn ile başlıyorsa yalnız o spawn yakalanır (ters: despawn); bloğun geri kalanı onun içindedir.
+	first := h.in_block && h.block_head
+	h.block_head = false
+	if h.block_skip {
+		return
+	}
 	if h.mode == .off || c.source == .script {
 		return
 	}
@@ -405,6 +416,62 @@ pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 		}
 	}
 	h.prepared = true
+	h.block_skip = first && c.kind == .spawn
+}
+
+// Yürütücü bir ters bloğu uygulamadan önce çağırır: blok komutları tek parça geçmişe girsin diye.
+pub fn (mut h History) begin_block() {
+	h.in_block = true
+	h.block_head = true
+	h.block_skip = false
+	h.stage_base = h.stage_n
+}
+
+// Bloğun tüm ters komutları tek bir staged blok olur: geri alma/yineleme adımı blok sayısından bağımsız kalır.
+pub fn (mut h History) end_block() {
+	if h.in_block && h.stage_t != -1 && !h.stage_over && h.stage_n > h.stage_base {
+		if h.stage_b >= h.stage_cap {
+			h.stage_over = true
+		} else {
+			unsafe {
+				h.stage_blks[h.stage_b] = HistoryBlock{
+					start: u64(h.stage_base)
+					n:     h.stage_n - h.stage_base
+				}
+			}
+			h.stage_b++
+		}
+	}
+	h.in_block = false
+	h.block_head = false
+	h.block_skip = false
+}
+
+// Blok içinde ters komutu mevcut blokların önüne ekler: sonradan yakalananlar önce uygulanır (ters sıra).
+fn (mut h History) prepend_inverse(t int, src &Command, n u32) {
+	if h.stage_t == -1 {
+		h.stage_t = t
+	}
+	if h.stage_over {
+		return
+	}
+	if h.stage_n + n > h.stage_cap {
+		h.stage_over = true
+		return
+	}
+	mut i := h.stage_n
+	for i > h.stage_base {
+		i--
+		unsafe {
+			h.stage_cmds[i + n] = h.stage_cmds[i]
+		}
+	}
+	for k in 0 .. n {
+		unsafe {
+			h.stage_cmds[h.stage_base + k] = src[k]
+		}
+	}
+	h.stage_n += n
 }
 
 // Hazırlama alanına blok ekler. Hedef yığın grubun ilk bloğunda sabitlenir; sonraki bloklar aynı yığına gider.
@@ -461,7 +528,11 @@ pub fn (mut h History) commit_capture(r ApplyResult) {
 		h.fresh = false
 	}
 	t := if h.mode == .undoing { 1 } else { 0 }
-	h.stage_block(t, h.scratch, h.scratch_n)
+	if h.in_block {
+		h.prepend_inverse(t, h.scratch, h.scratch_n)
+	} else {
+		h.stage_block(t, h.scratch, h.scratch_n)
+	}
 	if auto {
 		h.end_group()
 	}

@@ -90,8 +90,14 @@ pub fn (mut s Server) history_cancel_group() ! {
 fn (mut s Server) apply_blocks(mut blocks [][]cmd.Command) (u32, u32, []IdPair) {
 	mut ok := u32(0)
 	mut failed := u32(0)
-	mut pairs := []IdPair{}
+	mut total := 0
+	for b in blocks {
+		total += b.len
+	}
+	// Eşleşme sayısı komut sayısını aşamaz: dizi baştan bu kapasiteyle ayrılır (-gc none: büyüme eski tamponu sızdırır).
+	mut pairs := []IdPair{cap: total}
 	for bi in 0 .. blocks.len {
+		s.engine.history.begin_block()
 		for ci in 0 .. blocks[bi].len {
 			c := blocks[bi][ci]
 			if !s.engine.push(c) {
@@ -114,6 +120,7 @@ fn (mut s Server) apply_blocks(mut blocks [][]cmd.Command) (u32, u32, []IdPair) 
 				rewrite_after(mut blocks, bi, ci, c.entity, r.entity)
 			}
 		}
+		s.engine.history.end_block()
 	}
 	return ok, failed, pairs
 }
@@ -145,10 +152,12 @@ fn free_blocks(mut blocks [][]cmd.Command) {
 // Blokları ring belleğinden ayrı dizilere kopyalar; block(0) en son blok, yani uygulama sırası.
 // Her komut, bu işlemi tetikleyen isteğin kaynağını taşır (kayıtta kimin yaptığı görünsün).
 fn copy_blocks(view cmd.GroupView, src cmd.Source) [][]cmd.Command {
-	mut out := [][]cmd.Command{}
+	// Kapasite baştan: büyüyen dizi eski tamponu -gc none altında serbest bırakmaz.
+	mut out := [][]cmd.Command{cap: view.block_count()}
 	for i in 0 .. view.block_count() {
-		mut dst := []cmd.Command{}
-		for c in view.block(i) {
+		blk := view.block(i)
+		mut dst := []cmd.Command{cap: blk.len}
+		for c in blk {
 			mut sc := c
 			sc.source = src
 			dst << sc
