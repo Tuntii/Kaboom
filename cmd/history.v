@@ -204,10 +204,13 @@ mut:
 	stage_over  bool
 	stage_t     int // açık grubun hedef yığını (0 undo, 1 redo); -1 açık grup yok
 	// Yürütücünün ters bloğu: blok spawn ile başlıyorsa yalnız bu spawn'ın ters işlemi (despawn) yakalanır.
-	in_block   bool
-	block_head bool
-	block_skip bool
-	stage_base u32 // açık bloğun ters komutlarının stage_cmds'deki başlangıcı
+	in_block    bool
+	block_head  bool
+	block_skip  bool // blok başı yakalandıktan sonra geri kalan komutlar (kısmen) yakalanmaz
+	block_add   bool // blok başı add_component ise yalnız aynı (varlık, bileşen) set'leri atlanır
+	block_ent   ecs.EntityID
+	block_comp  u16
+	stage_base  u32 // açık bloğun ters komutlarının stage_cmds'deki başlangıcı
 }
 
 // Bir bloğun en büyük boyu: spawn/despawn ters bloğu, her bileşen için add ve her alan için set.
@@ -340,7 +343,8 @@ pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 	// Blok spawn ile başlıyorsa yalnız o spawn yakalanır (ters: despawn); bloğun geri kalanı onun içindedir.
 	first := h.in_block && h.block_head
 	h.block_head = false
-	if h.block_skip {
+	// Tek varlık kuralı: bir blok en fazla bir varlığın spawn/add'iyle başlar; atlama ona göre yapılır.
+	if h.block_skip && (!h.block_add || (c.kind == .set_field && c.entity == h.block_ent && c.comp == h.block_comp)) {
 		return
 	}
 	if h.mode == .off || c.source == .script {
@@ -416,11 +420,18 @@ pub fn (mut h History) capture_before(w &ecs.World, c Command) {
 		}
 	}
 	h.prepared = true
-	h.block_skip = first && c.kind == .spawn
+	h.block_skip = first && (c.kind == .spawn || c.kind == .add_component)
+	h.block_add = first && c.kind == .add_component
+	h.block_ent = c.entity
+	h.block_comp = c.comp
 }
 
 // Yürütücü bir ters bloğu uygulamadan önce çağırır: blok komutları tek parça geçmişe girsin diye.
+// Blok bir grup içinde çağrılmalı (yoksa yakalanan ters sessizce düşer); iç içe blok dış bloğu bozar.
 pub fn (mut h History) begin_block() {
+	// Yakalama kapalıyken (iptal) grup gerekmez: hiçbir şey yazılmaz.
+	assert h.depth > 0 || h.mode == .off, 'begin_block grup dışında'
+	assert !h.in_block, 'begin_block iç içe'
 	h.in_block = true
 	h.block_head = true
 	h.block_skip = false

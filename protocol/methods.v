@@ -274,6 +274,11 @@ fn (mut s Server) component_add(p Val) !Val {
 			comp:   plan.comp
 		})
 	}
+	// Ekleme ve değer yazımları tek geçmiş bloğu: tersi yalnız remove_component olur.
+	s.engine.history.begin_block()
+	defer {
+		s.engine.history.end_block()
+	}
 	mut cmds := [
 		cmd.Command{
 			kind:   .add_component
@@ -631,6 +636,11 @@ fn (mut s Server) scene_load(p Val) !Val {
 	}
 	// Dünya sıfırlanır: tick 0, boş geçmiş ve editor_depth 0 (sim.reset ile aynı iç yol).
 	_ = s.sim_reset()!
+	// Sıfırlama yeni motor (derinlik 0) kurar: kurulum bir grup içinde yazılır, geçmişi sonunda temizlenir.
+	s.engine.history.begin_group()
+	defer {
+		s.engine.history.end_group()
+	}
 	mut node := out.first()
 	for i in 0 .. n {
 		ent := ents.at(i) or { break }

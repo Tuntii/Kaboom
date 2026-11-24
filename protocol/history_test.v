@@ -573,3 +573,44 @@ fn test_undo_redo_cycles_keep_step_size() {
 	}
 	assert content_snapshot(&s) == start
 }
+
+// Bileşen ekleme geri al/yinele döngüsünde adım sabit kalmalı: ekleme bloğunun set'leri ayrıca ters üretmez.
+fn test_component_add_cycles_keep_step_size() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	_ = spawn_at(mut s, 3)
+	_ = hcall(mut s, rq(2, '"method":"component.add","params":{"entity":0,"component":"Sprite","values":{"size":2}}'))
+	start := content_snapshot(&s)
+	first_undo := hpick(history_op(mut s, 'history.undo'), 'commands').f64()
+	first_redo := hpick(history_op(mut s, 'history.redo'), 'commands').f64()
+	for turn in 0 .. 20 {
+		u := hpick(history_op(mut s, 'history.undo'), 'commands').f64()
+		assert u == first_undo, 'tur ${turn}: undo adimi ${u}, ilk ${first_undo}'
+		r := hpick(history_op(mut s, 'history.redo'), 'commands').f64()
+		assert r == first_redo, 'tur ${turn}: redo adimi ${r}, ilk ${first_redo}'
+	}
+	assert content_snapshot(&s) == start
+}
+
+// Bileşen çıkarma döngüsü: geri alma bileşeni değerleriyle geri koyar, yineleme yeniden çıkarır; adım sabit kalır.
+fn test_component_remove_cycles_keep_step_size() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	_ = spawn_at(mut s, 3)
+	_ = hcall(mut s, rq(2, '"method":"component.add","params":{"entity":0,"component":"Sprite","values":{"size":2}}'))
+	_ = hcall(mut s, rq(3, '"method":"component.remove","params":{"entity":0,"component":"Sprite"}'))
+	start := content_snapshot(&s)
+	first_undo := hpick(history_op(mut s, 'history.undo'), 'commands').f64()
+	first_redo := hpick(history_op(mut s, 'history.redo'), 'commands').f64()
+	for turn in 0 .. 20 {
+		u := hpick(history_op(mut s, 'history.undo'), 'commands').f64()
+		assert u == first_undo, 'tur ${turn}: undo adimi ${u}, ilk ${first_undo}'
+		r := hpick(history_op(mut s, 'history.redo'), 'commands').f64()
+		assert r == first_redo, 'tur ${turn}: redo adimi ${r}, ilk ${first_redo}'
+	}
+	assert content_snapshot(&s) == start
+}
