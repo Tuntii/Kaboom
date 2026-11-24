@@ -38,6 +38,8 @@ mut:
 	status_len int
 	err        [status_cap]u8
 	err_len    int
+	note       [status_cap]u8 // durum çubuğu bildirimi (ör. taşmada Esc); bir sonraki sürüklemede temizlenir
+	note_len   int
 }
 
 // Yeni editör: panel genişlikleri 240/300, kamera 0,0 görünüm yüksekliği 40, seçim yok.
@@ -79,6 +81,21 @@ fn (mut e Editor) load_scene(mut srv protocol.Server) {
 	}
 }
 
+// Hata satırı (kırmızı durum metni): yüklemeden bağımsız kurulum hataları da buradan gösterilir.
+fn (mut e Editor) set_error(msg string) {
+	e.err_len = put_str(mut e.err, 0, msg)
+}
+
+// Bildirim: durum çubuğunda hata yoksa sayaç metni yerine gösterilir.
+fn (mut e Editor) set_note(msg string) {
+	e.note_len = put_str(mut e.note, 0, msg)
+}
+
+// Son bildirim; yoksa boş. Tahsissiz görünüm.
+pub fn (e &Editor) note_text() string {
+	return unsafe { tos(&e.note[0], e.note_len) }
+}
+
 fn (mut e Editor) set_load_error(msg string) {
 	mut n := put_str(mut e.err, 0, 'sahne yüklenemedi: ')
 	n = put_str(mut e.err, n, msg)
@@ -97,7 +114,12 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 		e.started = true
 		// Açılışta duraklatılır: oynat/adım düğmeleri ilerlemeyi açıkça yönetir.
 		send_plain(mut srv, 'sim.pause')
-		e.sv.fields = resolve_scene_fields(srv.registry()) or { panic(err) }
+		if f := resolve_scene_fields(srv.registry()) {
+			e.sv.fields = f
+			e.sv.fields_ok = true
+		} else {
+			e.set_error('sahne alanları çözülemedi: Transform/Sprite kayıtlı değil')
+		}
 		if e.path.len > 0 {
 			e.load_scene(mut srv)
 		}
@@ -126,6 +148,8 @@ pub fn (mut e Editor) frame(mut c ui.Context, mut srv protocol.Server) EditorFra
 	c.statusbar_begin()
 	if e.err_len > 0 {
 		c.text(e.load_error(), .caption, ui.danger)
+	} else if e.note_len > 0 {
+		c.statusbar_text(e.note_text())
 	} else {
 		c.statusbar_text(e.status_text())
 	}

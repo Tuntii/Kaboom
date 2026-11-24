@@ -232,3 +232,42 @@ fn sv_close(a f32, b f32) bool {
 	d := if a > b { a - b } else { b - a }
 	return d < 1e-3
 }
+
+// Küçük geçmiş alanı: 4 komutluk hazırlama alanı; uzun sürüklemede grup taşar.
+fn sv_server_small() protocol.Server {
+	return protocol.Server.new(sim.Config{ capacity: 64, queue_capacity: 64, record_capacity: 1024, history_capacity: 4, history_groups: 8 }) or {
+		panic(err)
+	}
+}
+
+// Taşan grupta Esc iptali reddedilir: değer yine başlangıçta kalmalı (sessizce commit edilmez), bildirim görünmeli.
+fn test_esc_overflow_restores_value_and_notes() {
+	mut srv := sv_server_small()
+	defer {
+		srv.close()
+	}
+	mut atl := ui.Atlas.build(1.0) or { panic(err) }
+	mut c := ui.Context.new(&atl, 4096, 8192) or { panic(err) }
+	mut e := Editor.new('')
+	id := sv_spawn(mut srv, 0, 0, 4)
+	r := sv_warm(mut c, mut e, mut srv)
+	sx, sy := sv_at(&e, r, 0, 0)
+	sv_click(mut c, mut e, mut srv, sx, sy)
+	assert sv_sel(&e) == id
+
+	u0, r0 := srv.history_lens()
+	gx := sx + 30
+	gy := sy
+	sv_press(mut c, mut e, mut srv, gx, gy, false)
+	for k in 1 .. 13 {
+		sv_drag(mut c, mut e, mut srv, gx + f32(k) * 5, gy, false)
+	}
+	assert sv_x(&srv, id) > 0, 'taşmadan önce değer değişmiş olmalı'
+	sv_drag(mut c, mut e, mut srv, gx + 70, gy, true)
+	assert sv_close(sv_x(&srv, id), 0), 'Esc taşmada da değeri başlangıca yazar: ${sv_x(&srv, id)}'
+	sv_release(mut c, mut e, mut srv, gx + 70, gy)
+	assert sv_close(sv_x(&srv, id), 0), 'bırakma sonrası değer başlangıçta kalır'
+	u1, r1 := srv.history_lens()
+	assert u1 == u0 && r1 == r0, 'taşan grup yığına girmez: ${u0},${r0} → ${u1},${r1}'
+	assert e.note_text().contains('geri alma geçmişi doldu'), 'bildirim: ${e.note_text()}'
+}

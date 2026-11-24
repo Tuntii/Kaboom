@@ -38,8 +38,9 @@ struct SceneFields {
 // Sahne görünümünün durumu: seçim ve sürükleme (basış konumu, başlangıç değeri, pan başlangıç kamerası).
 struct SceneState {
 mut:
-	fields  SceneFields
-	sel     ?ecs.EntityID
+	fields    SceneFields
+	fields_ok bool
+	sel       ?ecs.EntityID
 	mode    SceneMode
 	grab    Handle
 	btn     int // pan düğmesi: 2 orta, 0 Boşluk + sol
@@ -143,15 +144,17 @@ fn pick_sprite(w &ecs.World, f SceneFields, wx f32, wy f32) ?ecs.EntityID {
 
 // Sahne görünümünün bir karesi. r: sahne dikdörtgeni (önceki kare); ilk karede sıfırdır ve iş yapılmaz.
 pub fn (mut e Editor) scene_view(mut c ui.Context, mut srv protocol.Server, r ui.Rect) {
-	if r.w <= 0 || r.h <= 0 {
-		return
-	}
 	w := srv.world()
 	// Seçili varlık öldüyse (ör. yükleme) seçim düşer; sürükleniyorsa grup kapanır.
 	alive_sel, dead_check := e.sv.selected()
 	if alive_sel && !w.is_alive(dead_check) {
 		e.sv.sel = none
 		e.leave_drag(mut srv)
+	}
+	// Sahne daraldıysa (ya da alan çözülemediyse) sürükleme kapanır: açık grup kalmaz.
+	if r.w <= 0 || r.h <= 0 || !e.sv.fields_ok {
+		e.leave_drag(mut srv)
+		return
 	}
 	has_sel, sel_id := e.sv.selected()
 	mut has_tf := false
@@ -187,11 +190,17 @@ pub fn (mut e Editor) scene_view(mut c ui.Context, mut srv protocol.Server, r ui
 	}
 
 	// Esc: sürüklemeyi iptal eder. Grup geri alınır (yığınlara girmez); değer başlangıca döner.
+	// Taşma: iptal grubu geri alamaz; grup hâlâ açıkken değer başlangıca yazılır ve grup normal kapanır
+	// (taşan grup yığına girmez). Bildirim durum çubuğunda gösterilir: sessiz kayıp olmaz.
 	mut cancelled := false
 	if e.sv.mode == .move && c.shortcut(.escape) {
-		srv.history_cancel_group() or { srv.history_end_group() }
 		e.sv.mode = .idle
 		cancelled = true
+		srv.history_cancel_group() or {
+			e.restore_start(mut srv)
+			srv.history_end_group()
+			e.set_note('geri alma geçmişi doldu; değer geri yüklendi')
+		}
 	}
 
 	match e.sv.mode {
@@ -233,6 +242,7 @@ pub fn (mut e Editor) scene_view(mut c ui.Context, mut srv protocol.Server, r ui
 				e.sv.cam_cy = e.cam.cy
 			} else if on_handle {
 				e.sv.mode = .pending
+				e.note_len = 0
 				e.sv.grab = grab
 				e.sv.press_x = mx
 				e.sv.press_y = my
@@ -271,6 +281,16 @@ fn (mut e Editor) move_to(mut srv protocol.Server, r ui.Rect, mx f32, my f32) {
 	}
 	if e.sv.grab != .arm_x {
 		e.set_transform(mut srv, 'y', e.sv.start_y - (my - e.sv.press_y) / k)
+	}
+}
+
+// Sürüklemeden önceki değerleri yazar (tutulan eksenler). Çağrı açık editör grubunun içinde olmalı.
+fn (mut e Editor) restore_start(mut srv protocol.Server) {
+	if e.sv.grab != .arm_y {
+		e.set_transform(mut srv, 'x', e.sv.start_x)
+	}
+	if e.sv.grab != .arm_x {
+		e.set_transform(mut srv, 'y', e.sv.start_y)
 	}
 }
 

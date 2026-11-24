@@ -213,19 +213,24 @@ fn record_input(hwnd voidptr, msg u32, wp usize, lp isize) {
 			}
 		}
 		0x0007 { p.focused = 1 } // WM_SETFOCUS
-		0x0008 { // WM_KILLFOCUS: bırakılmamış düğmeler kapanır
+		0x0008 { // WM_KILLFOCUS: bırakılmamış düğmeler ve tutulan tuşlar kapanır (bırakma olayı pencereye gelmez)
 			for b in 0 .. 3 {
 				if p.down[b] != 0 {
 					p.down[b] = 0
 					p.released[b] = 1
 				}
 			}
+			p.ctrl = 0
+			p.shift = 0
+			p.alt = 0
+			p.space = 0
 			C.ReleaseCapture()
 			p.focused = 0
 		}
 		else {}
 	}
-	if msg == 0x0200 || msg == 0x0100 || msg == 0x0104 || (msg >= 0x0201 && msg <= 0x0208) {
+	// Tutulan durum (ctrl/shift/alt/space) tuş bırakma mesajlarında da yenilenir: bırakılan tuş bayrakta kalmaz.
+	if msg == 0x0200 || msg == 0x0100 || msg == 0x0104 || msg == 0x0101 || msg == 0x0105 || (msg >= 0x0201 && msg <= 0x0208) {
 		p.ctrl = key_down(0x11) // VK_CONTROL
 		p.shift = key_down(0x10) // VK_SHIFT
 		p.alt = key_down(0x12) // VK_MENU
