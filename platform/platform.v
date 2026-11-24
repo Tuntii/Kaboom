@@ -1,6 +1,7 @@
 module platform
 
-// Pencere yapılandırması. width/height istemci alanıdır.
+// Pencere yapılandırması. width/height istemci alanıdır: dpi_aware true ise mantıksal piksel
+// (sistem DPI'ı ile fiziksel piksele ölçeklenir), false ise doğrudan fiziksel (framebuffer) piksel.
 pub struct WindowConfig {
 pub:
 	title     string = 'V-Core'

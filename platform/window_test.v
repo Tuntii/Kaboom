@@ -21,10 +21,22 @@ fn test_size_is_client_area() {
 		return
 	}
 	defer { w.close() }
-	// Mantıksal boyut DPI ile ölçeklenir; size() fiziksel piksel döner.
-	s := w.dpi_scale()
+	// Mantıksal boyut DPI ile ölçeklenir (tamsayı formülü: boyut*dpi/96); size() fiziksel piksel döner.
+	d := int(w.dpi_scale() * 96 + 0.5)
 	cw, ch := w.size()
-	assert cw == int(200 * s + 0.5) && ch == int(150 * s + 0.5)
+	assert cw == 200 * d / 96 && ch == 150 * d / 96
+}
+
+// dpi_aware false: width/height doğrudan fiziksel piksel, DPI'dan bağımsız.
+fn test_size_is_physical_when_not_dpi_aware() {
+	mut w := Window.new(WindowConfig{ visible: false, width: 200, height: 150, dpi_aware: false }) or {
+		eprintln('atlandi: GL yok: ${err}')
+		return
+	}
+	defer { w.close() }
+	cw, ch := w.size()
+	assert cw == 200 && ch == 150
+	assert w.dpi_scale() == 1.0
 }
 
 fn C.SendMessageW(hwnd voidptr, msg u32, wp usize, lp isize) isize

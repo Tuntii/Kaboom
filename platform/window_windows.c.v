@@ -240,8 +240,8 @@ pub fn Window.new(cfg WindowConfig) !Window {
 	}
 	C.RegisterClassExW(&wc)
 
-	// Mantıksal boyut sistem DPI'ı ile ölçeklenir; DPI-farkında değilse 96 kalır (ölçek 1).
-	dpi := C.vcore_system_dpi()
+	// dpi_aware false: boyut doğrudan fiziksel piksel, ölçek 1.0 (96).
+	dpi := if cfg.dpi_aware { C.vcore_system_dpi() } else { 96 }
 	mut rc := [0, 0, cfg.width * dpi / 96, cfg.height * dpi / 96]!
 	C.vcore_adjust_rect(&rc[0], ws_overlappedwindow, dpi)
 	ow := rc[2] - rc[0]
@@ -259,7 +259,7 @@ pub fn Window.new(cfg WindowConfig) !Window {
 	if hwnd == unsafe { nil } {
 		return error('CreateWindowExW basarisiz')
 	}
-	C.vcore_dpi_set(C.vcore_dpi_for_window(hwnd))
+	C.vcore_dpi_set(if cfg.dpi_aware { C.vcore_dpi_for_window(hwnd) } else { 96 })
 	w.hdc = C.GetDC(hwnd)
 
 	mut pfd := C.PIXELFORMATDESCRIPTOR{

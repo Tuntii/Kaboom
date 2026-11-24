@@ -118,7 +118,8 @@ fn run_window(args []string) {
 	mut win := platform.Window.new(platform.WindowConfig{
 		width:   o.width
 		height:  o.height
-		visible: !o.hidden
+		visible:   !o.hidden
+		dpi_aware: false // --width/--height çerçeve piksel kalır; ekran görüntüsü boyutları deterministik
 	}) or { gl_fail(err) }
 	defer {
 		win.close()
