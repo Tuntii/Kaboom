@@ -109,7 +109,7 @@ const command_docs = [
 	CommandDoc{
 		method: 'history.undo'
 		params: 'none'
-		result: '{"applied": bool, "commands": n, "failed": n, "remap": [{"old": id, "new": id}]}; uygulanmadıysa applied false ve "reason": "empty" (boş yığın, hata değil) ya da "editor_group_open" (açık editör grubu içinde reddedilir); yalnız reddedilince neden alanı döner'
+		result: '{"applied": bool, "commands": n, "failed": n, "remap": [{"old": id, "new": id}]}; uygulanmadıysa applied false ve "reason": "empty" (boş yığın, hata değil) ya da "editor_group_open" (açık editör grubu içinde reddedilir); yalnız reddedilince neden alanı döner. Açık editör grubu iptali (D1) yalnız editör yazımlarını geri alır; ajan istekleri kendi geri alma adımlarıdır. Aynı alanı iki kaynak değiştirdiyse iptal editörün başlangıç değerini yazar, ajanın adımı yığında kalır'
 	},
 	CommandDoc{
 		method: 'history.redo'

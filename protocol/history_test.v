@@ -546,7 +546,7 @@ fn test_unbalanced_end_group_keeps_request_group_open() {
 	e := spawn_at(mut s, 0)
 	// Dış katman (istek grubu gibi) açık; editör derinliği 0.
 	s.engine.history.begin_group()
-	set_x(mut s, e, 4, .agent)
+	set_x(mut s, e, 4, .editor)
 	s.history_end_group()
 	assert s.engine.history.undo_len() == 1
 	assert s.engine.history.staged().block_count() == 1
@@ -647,4 +647,103 @@ fn test_failed_head_add_still_captures_sets() {
 fn sprite_size(mut s Server, e u64) f64 {
 	resp := hcall(mut s, rq(1, '"method":"entity.get","params":{"entity":${e}}'))
 	return hpick(hpick(hpick(hresult(resp), 'components'), 'Sprite'), 'size').f64()
+}
+
+fn set_y(mut s Server, e u64, y f64, src cmd.Source) {
+	line := rq(1, '"method":"component.set","params":{"entity":${e},"component":"Transform","field":"y","value":${y}}')
+	if src == .editor {
+		_ = s.handle_from(line, .editor)
+		return
+	}
+	_ = hcall(mut s, line)
+}
+
+fn tr_y(mut s Server, e u64) f64 {
+	resp := hcall(mut s, rq(1, '"method":"entity.get","params":{"entity":${e}}'))
+	return hpick(hpick(hpick(hresult(resp), 'components'), 'Transform'), 'y').f64()
+}
+
+// Editör sürüklemesi sırasında ajan başka bir alanı değiştirirse iptal yalnız editörün x'ini geri alır; y kalır.
+fn test_agent_edit_during_editor_drag_survives_cancel() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	e := spawn_at(mut s, 0)
+	s.history_begin_group()
+	set_x(mut s, e, 3, .editor)
+	set_y(mut s, e, 5, .agent)
+	s.history_cancel_group() or { panic(err) }
+	assert tr_x(mut s, e) == 0
+	assert tr_y(mut s, e) == 5
+	// Ajanın adımı yığında kendi geri alma adımı olarak durur.
+	assert s.engine.history.undo_len() == 2
+	assert hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert tr_y(mut s, e) == 0
+}
+
+// Aynı alan iki kaynakta değişirse iptal editörün başlangıç değerini yazar; ajanın adımı yığında kalır.
+fn test_cancel_same_field_restores_editor_start_value() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	e := spawn_at(mut s, 0)
+	s.history_begin_group()
+	set_x(mut s, e, 3, .editor)
+	set_x(mut s, e, 4, .agent)
+	s.history_cancel_group() or { panic(err) }
+	assert tr_x(mut s, e) == 0
+	assert s.engine.history.undo_len() == 2
+}
+
+// Ajan grubu editör grubu kapanana kadar yığında; editör grubu üstte: önce editör, sonra ajan geri alınır.
+fn test_agent_group_separate_during_editor_group() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	e := spawn_at(mut s, 0)
+	s.history_begin_group()
+	set_x(mut s, e, 3, .editor)
+	set_y(mut s, e, 7, .agent)
+	s.history_end_group()
+	// spawn (1) + ajan (1) + editör (1): editör grubu üstte, ajan grubu onun altında.
+	assert s.engine.history.undo_len() == 3
+	assert hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert tr_x(mut s, e) == 0
+	assert tr_y(mut s, e) == 7
+	assert hpick(history_op(mut s, 'history.undo'), 'applied').as_bool()
+	assert tr_y(mut s, e) == 0
+}
+
+// İptal kaydı: iptalin ters yazımları yalnız editör kaynaklı olarak kaydedilir.
+fn test_cancel_record_has_only_editor_commands() {
+	mut s := hist_server()
+	defer {
+		s.close()
+	}
+	path := os.join_path(os.temp_dir(), 'vcore_hist_cancel_only_${os.getpid()}.vrec').replace('\\', '/')
+	defer {
+		os.rm(path) or {}
+	}
+	_ = hcall(mut s, rq(1, '"method":"record.start"'))
+	e := spawn_at(mut s, 0)
+	s.history_begin_group()
+	set_x(mut s, e, 3, .editor)
+	set_y(mut s, e, 5, .agent)
+	s.history_cancel_group() or { panic(err) }
+	_ = hcall(mut s, rq(2, '"method":"record.stop","params":{"path":"${path}"}'))
+	rec := cmd.load_recording(path) or { panic(err) }
+	mut last_agent := -1
+	for i, en in rec.entries {
+		if en.cmd.source == .agent {
+			last_agent = i
+		}
+	}
+	assert last_agent >= 0
+	assert rec.entries.len - last_agent - 1 >= 1
+	for i in last_agent + 1 .. rec.entries.len {
+		assert rec.entries[i].cmd.source == .editor
+	}
 }

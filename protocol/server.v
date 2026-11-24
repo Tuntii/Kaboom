@@ -161,10 +161,11 @@ pub fn (mut s Server) handle_from(line string, source cmd.Source) ?string {
 	if s.region == unsafe { nil } {
 		return closed_line
 	}
-	// Her istek bir geçmiş grubudur; açık editör grubu varsa istek onun içine düşer (derinlik sayılır).
-	s.engine.history.begin_group()
+	// Her istek bir geçmiş grubudur. Açık editör grubu varken ajan isteği (editör dışı kaynak) kendi grubunu
+	// kurar (D1): editör grubunun geri alınmasına girmez; editör istekleri editör grubunun içinde kalır.
+	s.engine.history.begin_request(source != .editor)
 	defer {
-		s.engine.history.end_group()
+		s.engine.history.end_request()
 	}
 	arena_reset()
 	// Ayrıştırıcı özyinelemelidir ve NUL ile kesilen metinleri (strlen görünümü) kabul etmez:
